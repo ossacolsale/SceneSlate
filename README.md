@@ -1,83 +1,83 @@
-# SceneSlate 3.1
+# SceneSlate 3.2
 
-SceneSlate is an **offline desktop media-logging application** built with Python and Tkinter. It organizes film footage into **scenes → shots → optional sub-shots → takes**. Each take can reference one video file, one audio file, or both, with independent quality ratings (**B** = good, **R** = reserve, **S** = reject). Original media files are **never moved, deleted, copied, or modified**.
+SceneSlate is a **cross-platform, offline footage catalog** written in Python 3 and Tkinter. Its interface is available in **English and Italian**. A new installation starts in **English**; change the language using the **Language / Lingua** selector in the top toolbar. The preference survives restarts and upgrades, and switching languages does **not** rename files, modify a catalog or reset the scene selection.
 
-The interface is currently in Italian; this README and project documentation are in English.
+Footage is organized as **scene → shot → optional sub-shot → take**. Every take has an optional video reference and an optional audio reference, each with independent ratings (`B` good, `R` reserve, `S` reject). Takes can have descriptions and annotations; scenes, shots and sub-shots have optional descriptions. **Original media files are never renamed, moved, deleted or duplicated.** Pairing is cataloguing only: it does not synchronize audio or video waveforms.
 
-## Getting started
+## Starting the application
 
 | Platform | Recommended launcher | Requirements |
 |---|---|---|
-| Windows | Double-click `SceneSlate.vbs` (or `scene_slate.pyw`) | Official Python 3.10+ installation with Tkinter and `.pyw` association |
-| Linux | Launch `SceneSlate.desktop` from your file manager (you may have to mark it trusted/executable), or run `./avvia_linux.sh` | Python 3.10+ with Tkinter (`sudo apt install python3-tk` on Debian/Ubuntu) |
+| Windows | Double-click `SceneSlate.vbs` or `scene_slate.pyw` | Python 3.10+ with Tkinter and `.pyw` file association |
+| Linux | Open `SceneSlate.desktop` from a file manager, or run `./launch_linux.sh` | Python 3.10+ with Tkinter (`python3-tk` on Ubuntu/Debian) |
 
-These launchers are designed to avoid showing a terminal window. On Windows, `avvia_windows.bat` is provided as a diagnostic fallback. On Linux, you can also run `python3 scene_slate.py` from a terminal.
+The Windows `.vbs` entry point uses `pythonw.exe` (via `.pyw` file association) so it does not leave a Command Prompt window open. For troubleshooting use `launch_windows.bat`. The Linux desktop shortcut uses `Terminal=false`; depending on your file manager, it may require marking it executable or trusted. To launch in a terminal, run `python3 scene_slate.py`.
 
-The source distribution does **not** include a compiled Windows `.exe`. To build a stand-alone executable on its target platform, run `build_windows.bat` or `build_linux.sh` (requires PyInstaller). The included GitHub Actions workflow can build platform-specific artifacts.
+This source package is *not* a precompiled Windows executable. To build an independent executable on the target OS, use `build_windows.bat` or `build_linux.sh` after installing PyInstaller. The GitHub Actions workflow tests and builds for Windows and Linux, with downloadable workflow artifacts.
 
-## Basic workflow
+## Typical workflow
 
-1. Point the video and audio browsers at your existing media folders; files remain in place, including on RAID or network storage. The browsers support searching subfolders, sorting by name/date, and filtering for unused files.
-2. Add scenes with **+ Scena**, shots with **+ Shot**, and optional sub-shots with **+ Sotto-shot**. Shot identifiers are positive integers; sub-shot identifiers can be arbitrary names such as `A`, `B`, `Close-up`, or `Camera 2`. Takes can also belong directly to a shot without a sub-shot.
-3. Drag a video or audio file onto a shot/sub-shot to create a take. Drop the other kind of file onto the take row to complete the pair. Pairing is **explicit**, not guessed from filenames or dates.
-4. New takes get the next sequential take number in their parent shot/sub-shot. The number can be edited with **N° ciak…**; **↻ Auto** recalculates automatically assigned numbers while keeping manually set numbers fixed. Filesystem creation dates are used only for optional browser sorting (Linux may fall back to modification time).
-5. Navigate takes with **Up/Down**, select video or audio with **Left/Right**, and rate the selected side using **B/R/S**. **Delete** unlinks only the selected media reference, not the underlying file.
-6. Optionally enter descriptions for scenes, shots and sub-shots, plus a description and annotations for each take (audio/video pair). All values are saved and included in full exports.
+1. Browse the original video and audio folders. Each file browser supports name/date sorting, searching, subfolder scanning, highlighting unassigned files, and filtering to unassigned files only.
+2. Create scenes and shots (positive integers), with optional sub-shots named `A`, `B`, `Detail`, `Wide shot`, or any other nonempty name. Takes may be attached directly to a shot even when sub-shots exist.
+3. Drag a video or audio onto a shot/sub-shot to create a take. Drag the other kind onto the same take row to explicitly pair them. No automatic media matching is attempted.
+4. New takes are numbered sequentially by insertion order starting at 1 within each shot or sub-shot. Renumber manually as necessary; **Auto** restores automatic numbering while respecting other manually locked numbers.
+5. Use arrow keys to select a take (up/down) and side (left/right); use `B`, `R`, `S` to rate the active side. Delete unlinks the selected side only. Add optional descriptions and annotations using the fields below the take table.
+6. Use `Ctrl+C` and `Ctrl+V` in the scene tree to copy a scene/shot/sub-shot to multiple destinations. All copies reuse references to the *same* media files; they never copy the bytes.
 
-## Fast copy/paste between scenes and shots
+## Language behavior
 
-Select a node on the left, then press **Ctrl+C** or use **Copia contenuto**. Select a destination and press **Ctrl+V** or **Incolla nella selezione**. Clipboard contents remain available for repeated pastes into different destinations.
+- The language choice is stored in the user session (`language: "en"` or `"it"`), **not** in the media catalog. Different computers can display the same catalog in different languages.
+- A clean profile starts in English, including buttons, file-browser labels, sort choices, prompts and status messages. Language can be switched at runtime.
+- Existing projects keep their custom scene/shot naming conventions. For a new catalog, the default scene label is `Scene` in both languages; change it under **Naming… / Convenzione…** if needed.
+- **Source file names, launcher names, CSV file names, CSV column headers, and exported report text are English regardless of UI language.** Resolve's fixed metadata column names are left unchanged. Ratings `B/R/S` and the stable JSON keys never change.
+- Your own scene descriptions, annotations, sub-shot names, and media paths are never translated or rewritten.
 
-- Pasting into a **scene** creates new shots, assigning unused shot numbers when needed.
-- Pasting into a **shot** appends takes and/or sub-shots depending on the copied node.
-- Pasting into a **sub-shot** appends the copied takes.
+## Saving, resuming, and upgrading
 
-Descriptions and annotations travel with copied objects. Sub-shot IDs are regenerated, duplicate names receive suffixes, and pasted takes are numbered progressively. **Only filesystem references are copied**, so you can reuse footage across many scenes without duplicating media on disk.
-
-## Saving, compatibility and upgrades
-
-Use **Salva con nome…** to save a named `*.sceneslate.json` catalog; later edits are automatically saved. Unnamed drafts are also recoverable locally. Catalogs from earlier versions are migrated without inventing audio/video pairings. Before a migrated catalog is overwritten, a versioned `*.v1.bak`, `*.v2.bak`, or `*.v3.bak` backup is kept. Legacy notes on scenes/shots become descriptions; take notes become annotations. Legacy JSON fields are preserved where possible.
-
-Application preferences live **outside the program directory**, so replacing the extracted software folder will not delete them:
+Named catalogs use `*.sceneslate.json`, saved where you choose. The last catalog, directory selections, file-browser sorting/filter state, selected shot/take, and UI language are automatically restored from a per-user directory:
 
 - Windows: `%APPDATA%\SceneSlate\session.json`
 - Linux: `${XDG_CONFIG_HOME:-~/.config}/sceneslate/session.json`
-- Override directory: `SCENESLATE_CONFIG_DIR` environment variable.
+- Optional override: `SCENESLATE_CONFIG_DIR`
 
-Your named catalogs and original media stay wherever you saved them. Keep independent backups of important projects.
+The current unnamed autosave is named `autosaved_draft.sceneslate.json`. SceneSlate **also discovers the old `bozza_autosalvata.sceneslate.json` file** when restoring an unsaved catalog from an earlier version. Older catalog JSON formats can be opened and migrated; first save of a migrated catalog creates a version-specific backup before overwriting it. Existing user-defined names and media references are preserved.
 
-## Exporting data to DaVinci Resolve and other software
+To update SceneSlate, replace only its application folder; do not delete the profile directory or your named catalogs. Keep an independent backup of important metadata and footage.
 
-**Esporta…** generates:
+## Exports
 
-| File | Purpose |
+Use **Export… / Esporta…** to select an output directory. The files are:
+
+| File | Contents |
 |---|---|
-| `catalogo_completo.csv` | One row per take with video/audio paths, independent ratings, optional sub-shot, descriptions and annotations; UTF-8 with BOM, `;` delimiter |
-| `riepilogo_shot.csv` | Summary by shot and sub-shot |
-| `resolve_metadata.csv` | Resolve Media Pool metadata, including `File Name`, `Clip Directory`, `Scene`, `Shot`, `Take`, `Keywords`, and `Comments` |
-| `report_esportazione.txt` | Missing media, conflicting reuse, and export warnings |
+| `full_catalog.csv` | One row per take, video/audio paths, quality ratings, descriptions, notes, sub-shot and all references; UTF-8 BOM, semicolon-delimited |
+| `shot_summary.csv` | Summary for each shot and optional sub-shot; UTF-8 BOM, semicolon-delimited |
+| `resolve_metadata.csv` | Standard DaVinci Resolve columns `File Name`, `Clip Directory`, `Scene`, `Shot`, `Take`, `Keywords`, `Comments`; UTF-8, comma-delimited |
+| `export_report.txt` | Missing media, contradictory reuse warnings, export notes |
 
-Import Resolve metadata using **File → Import Metadata To → Media Pool**. Descriptions and annotations are included in `Comments`. Sub-shot information is included in Keywords/Comments because a universally supported Resolve sub-shot metadata field is not available.
+In DaVinci Resolve, try **File → Import Metadata To → Media Pool** with the Resolve CSV on a *copy* of the project first. Resolve metadata is clip-based. If one physical media file has multiple incompatible Scene/Shot/Take values across catalog locations, SceneSlate **omits that clip from the Resolve-specific CSV** and records the ambiguity, but keeps *every use* in `full_catalog.csv`.
 
-**Important:** Resolve metadata is clip-based. If the same physical file appears in multiple scenes with incompatible metadata, SceneSlate preserves all uses in its complete catalog but omits the ambiguous clip from the Resolve-specific metadata CSV and explains the conflict in the report.
+The JSON schema and the stored media ratings are language-neutral. English CSV headings and output names are intentional changes from 3.1; scripts consuming the old Italian CSV names/headers need to be updated.
 
-**SceneSlate does not synchronize audio and video.** It logs their association. Use Resolve's timecode sync, waveform sync or a manual clap reference for actual alignment. Test CSV imports on a copy of the target project first.
-
-Command-line export:
+Command-line export (always writes English output):
 
 ```bash
-python3 scene_slate.py --export catalog.sceneslate.json --out /path/to/export
-# Windows equivalent: py -3 scene_slate.py --export catalog.sceneslate.json --out C:\path\to\export
+python3 scene_slate.py --export catalog.sceneslate.json --out /path/to/output
+# Windows: py -3 scene_slate.py --export catalog.sceneslate.json --out C:\path\to\output
 ```
 
-## Development and tests
+## Development and automated tests
 
-Runtime uses only the Python standard library (including Tkinter). Run tests with:
+The application uses only the Python standard library at runtime. Run tests:
 
 ```bash
 python3 -m unittest discover -s tests -v
-# For GUI tests on headless Linux:
+# Headless Linux GUI tests:
 xvfb-run -a python3 -m unittest discover -s tests -v
 ```
 
-There is currently **no license file**. Public source availability does not itself grant broad redistribution or reuse rights.
+The internationalization strings are in `scene_i18n.py`; new UI labels and messages should be added there with English equivalents. Keep data model field names and stored session mode IDs untranslated. For cross-platform builds use the included GitHub Actions workflow.
+
+## Limitations
+
+SceneSlate does **not** edit, sync or preview media. Creation timestamps on Linux may fall back to modification timestamps when the filesystem does not expose birth time. Audio/video pairing requires a user's deliberate choice. There is currently **no license file**; public availability of source code does not itself grant broad redistribution or reuse rights.

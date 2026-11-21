@@ -1,4 +1,4 @@
-"""SceneSlate 3.1 catalog engine: scene/shot/subshot/take with video/audio pairs.
+"""SceneSlate 3.2 catalog engine: scene/shot/subshot/take with video/audio pairs.
 
 No media file is modified. This module has no GUI dependencies.
 """
@@ -26,8 +26,8 @@ class CatalogError(ValueError):
 
 
 def new_catalog():
-    return {'version': VERSION, 'name': 'Nuovo catalogo',
-            'settings': {'scene_label': 'Scena', 'shot_label': 'Shot', 'separator': ' / ', 'padding': 0},
+    return {'version': VERSION, 'name': 'New catalog',
+            'settings': {'scene_label': 'Scene', 'shot_label': 'Shot', 'separator': ' / ', 'padding': 0},
             'video_root': '', 'audio_root': '', 'scenes': []}
 
 
@@ -632,27 +632,27 @@ def sort_directory_entries(entries,mode='name_asc'):
 
 
 def export_catalog_csv(c, destination):
-    fields = ['Scena','Shot','Sotto-shot','Ciak','Numero manuale','Etichetta','Video','Qualità video','Percorso video',
-              'Esiste video','Audio','Qualità audio','Percorso audio','Esiste audio',
-              'Descrizione scena','Descrizione shot','Descrizione sotto-shot','Descrizione ciak','Annotazione ciak','Note scena (legacy)','Note shot (legacy)','Note sotto-shot (legacy)','Note ciak (legacy)']
+    fields = ['Scene','Shot','Sub-shot','Take','Manual number','Label','Video','Video quality','Video path',
+              'Video exists','Audio','Audio quality','Audio path','Audio exists',
+              'Scene description','Shot description','Sub-shot description','Take description','Take annotation','Scene notes (legacy)','Shot notes (legacy)','Sub-shot notes (legacy)','Take notes (legacy)']
     with open(destination, 'w', encoding='utf-8-sig', newline='') as f:
         w = csv.DictWriter(f, fieldnames=fields, delimiter=';');w.writeheader()
         for s, sh, sub, container in iter_containers(c):
             for t in sorted(container['takes'], key=lambda x:x['number']):
                 v,a = t.get('video'),t.get('audio')
                 w.writerow(dict(zip(fields,[s['number'],sh['number'],sub['name'] if sub else '',t['number'],
-                    'SI' if t['manual_number'] else 'NO',label(c,s['number'],sh['number'],sub['name'] if sub else None),
+                    'YES' if t['manual_number'] else 'NO',label(c,s['number'],sh['number'],sub['name'] if sub else None),
                     Path(v['path']).name if v else '',v['quality'] if v else '',v['path'] if v else '',
-                    'SI' if v and Path(v['path']).is_file() else ('NO' if v else ''),
+                    'YES' if v and Path(v['path']).is_file() else ('NO' if v else ''),
                     Path(a['path']).name if a else '',a['quality'] if a else '',a['path'] if a else '',
-                    'SI' if a and Path(a['path']).is_file() else ('NO' if a else ''),
+                    'YES' if a and Path(a['path']).is_file() else ('NO' if a else ''),
                     s.get('description',''),sh.get('description',''),sub.get('description','') if sub else '',
                     t.get('description',''),t.get('annotation',''),s.get('notes',''),sh.get('notes',''),
                     sub.get('notes','') if sub else '',t.get('notes','')])))
 
 
 def export_shots_csv(c, destination):
-    fields=['Scena','Shot','Sotto-shot','Etichetta','Ciak (video[B/R/S] + audio[B/R/S])','Ciak incompleti','Descrizione scena','Descrizione shot','Descrizione sotto-shot']
+    fields=['Scene','Shot','Sub-shot','Label','Takes (video[B/R/S] + audio[B/R/S])','Incomplete takes','Scene description','Shot description','Sub-shot description']
     with open(destination,'w',encoding='utf-8-sig',newline='') as f:
         w=csv.writer(f,delimiter=';');w.writerow(fields)
         for s,sh,sub,container in iter_containers(c):
@@ -676,27 +676,27 @@ def resolve_rows(c):
                 for s,sh,sub,t,k,m in entries}
         file=entries[0][5]['path']
         if len(unique)>1:
-            warnings.append(f"ESCLUSO {Path(file).name}: usato in {len(unique)} punti diversi del catalogo; Resolve non può associare più valori Scene/Shot/Take allo stesso file. Il CSV completo conserva tutti gli usi.")
+            warnings.append(f"SKIPPED {Path(file).name}: used at {len(unique)} catalog locations. Resolve cannot assign multiple Scene/Shot/Take values to one file. The full catalog CSV preserves all uses.")
             continue
         s,sh,sub,t,kind,med=entries[0];q=med['quality']
-        if not Path(file).is_file():warnings.append(f'ATTENZIONE {Path(file).name}: file non disponibile.')
+        if not Path(file).is_file():warnings.append(f'WARNING {Path(file).name}: file not found.')
         other=t.get('audio' if kind=='video' else 'video')
-        details=f"Valutazione {kind}: {QUALITIES[q]} ({q})."
-        if sub:details+=f" Inquadratura: {sub['name']}."
-        if other:details+=f" Abbinato a: {Path(other['path']).name}."
+        details=f"{kind.capitalize()} rating: {dict(B='Good', R='Reserve', S='Reject')[q]} ({q})."
+        if sub:details+=f" Sub-shot: {sub['name']}."
+        if other:details+=f" Paired with: {Path(other['path']).name}."
         notes=' '.join(x.strip() for x in (s.get('description',''),sh.get('description',''),
             sub.get('description','') if sub else '',t.get('description',''),
             t.get('annotation',''),med.get('notes','')) if x.strip())
-        if notes:details+=' Note: '+notes.replace('\n',' / ')
-        sub_keyword=(f", INQUADRATURA_{sub['name'].replace(',', '_')}" if sub else '')
+        if notes:details+=' Notes: '+notes.replace('\n',' / ')
+        sub_keyword=(f", SUBSHOT_{sub['name'].replace(',', '_')}" if sub else '')
         rows.append({'File Name':Path(file).name,'Clip Directory':str(Path(file).parent),
              'Scene':str(s['number']),'Shot':str(sh['number']),'Take':str(t['number']),
-             'Keywords':f"SCENA_{s['number']}, SHOT_{sh['number']}{sub_keyword}, CIAK_{t['number']}, QUALITA_{q}, {kind.upper()}",
+             'Keywords':f"SCENE_{s['number']}, SHOT_{sh['number']}{sub_keyword}, TAKE_{t['number']}, QUALITY_{q}, {kind.upper()}",
              'Comments':details})
     by_name=defaultdict(set)
     for row in rows:by_name[row['File Name'].casefold()].add(row['Clip Directory'])
     for name,folders in by_name.items():
-        if len(folders)>1:warnings.append(f'ATTENZIONE {name}: nome ripetuto in cartelle differenti; in Resolve verifica il matching sul percorso.')
+        if len(folders)>1:warnings.append(f'WARNING {name}: filename exists in multiple directories; verify path matching in Resolve.')
     return rows,warnings
 
 
@@ -709,11 +709,11 @@ def export_resolve_csv(c,destination):
 
 def export_all(c,directory):
     dest=Path(directory);dest.mkdir(parents=True,exist_ok=True)
-    export_catalog_csv(c,dest/'catalogo_completo.csv')
-    export_shots_csv(c,dest/'riepilogo_shot.csv')
+    export_catalog_csv(c,dest/'full_catalog.csv')
+    export_shots_csv(c,dest/'shot_summary.csv')
     count,warnings=export_resolve_csv(c,dest/'resolve_metadata.csv')
-    with (dest/'report_esportazione.txt').open('w',encoding='utf-8') as f:
-        f.write(f'SceneSlate 3.1 - report di esportazione\nRighe Resolve: {count}\n\n')
-        f.write('\n'.join(warnings) if warnings else 'Nessuna ambiguità rilevata.\n')
-        f.write('\n\nATTENZIONE: accoppiamento catalografico, NON sincronizzazione timecode/audio.\n')
+    with (dest/'export_report.txt').open('w',encoding='utf-8') as f:
+        f.write(f'SceneSlate 3.2 - export report\nResolve rows: {count}\n\n')
+        f.write('\n'.join(warnings) if warnings else 'No ambiguities detected.\n')
+        f.write('\n\nNOTE: catalog pairing only; NO actual timecode/audio synchronization.\n')
     return count,warnings

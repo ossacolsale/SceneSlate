@@ -7,7 +7,7 @@ Set fs = CreateObject("Scripting.FileSystemObject")
 folder = fs.GetParentFolderName(WScript.ScriptFullName)
 script = folder & "\scene_slate.pyw"
 If Not fs.FileExists(script) Then
-    MsgBox "File non trovato: " & script, vbCritical, "SceneSlate"
+    MsgBox "File not found: " & script, vbCritical, "SceneSlate"
     WScript.Quit 1
 End If
 shell.CurrentDirectory = folder

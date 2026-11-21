@@ -1,4 +1,4 @@
-"""Regression suite for SceneSlate 3.1 tree, metadata, copying and sequential takes."""
+"""Regression suite for SceneSlate 3.2 tree, metadata, copying and sequential takes."""
 import copy
 import csv
 import json
@@ -60,13 +60,13 @@ class SceneSlate31Tests(unittest.TestCase):
         self.assertEqual(pair['annotation'],'Rumore del frigo al secondo 7')
         self.assertEqual(pair['audio']['path'],str(self.audio))
         out=self.home/'out';c.export_all(restored,out)
-        with (out/'catalogo_completo.csv').open(encoding='utf-8-sig',newline='') as f:
+        with (out/'full_catalog.csv').open(encoding='utf-8-sig',newline='') as f:
             rows=list(csv.DictReader(f,delimiter=';'))
-        self.assertEqual(rows[0]['Descrizione scena'],'Interno cucina')
-        self.assertEqual(rows[0]['Descrizione shot'],'Campo lungo')
-        self.assertEqual(rows[0]['Descrizione sotto-shot'],'Camera sinistra')
-        self.assertEqual(rows[0]['Descrizione ciak'],'Ciak con migliore entrata')
-        self.assertEqual(rows[0]['Annotazione ciak'],'Rumore del frigo al secondo 7')
+        self.assertEqual(rows[0]['Scene description'],'Interno cucina')
+        self.assertEqual(rows[0]['Shot description'],'Campo lungo')
+        self.assertEqual(rows[0]['Sub-shot description'],'Camera sinistra')
+        self.assertEqual(rows[0]['Take description'],'Ciak con migliore entrata')
+        self.assertEqual(rows[0]['Take annotation'],'Rumore del frigo al secondo 7')
         self.assertIn('Rumore del frigo', (out/'resolve_metadata.csv').read_text())
 
     def test_copy_snapshot_multiple_destinations_and_repeated_media(self):
@@ -89,7 +89,7 @@ class SceneSlate31Tests(unittest.TestCase):
         # contradictory scene/take metadata to one Media Pool clip.
         rows, warnings=c.resolve_rows(self.cat)
         self.assertEqual(rows,[])
-        self.assertTrue(any('ESCLUSO' in item for item in warnings))
+        self.assertTrue(any('SKIPPED' in item for item in warnings))
         self.assertTrue(self.video.exists());self.assertTrue(self.audio.exists())
 
     def test_v3_migration_description_annotation_order_and_backup(self):

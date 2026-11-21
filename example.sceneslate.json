@@ -1,8 +1,8 @@
 {
   "version": 4,
-  "name": "Esempio vuoto",
+  "name": "Example catalog",
   "settings": {
-    "scene_label": "Scena",
+    "scene_label": "Scene",
     "shot_label": "Shot",
     "separator": " / ",
     "padding": 0

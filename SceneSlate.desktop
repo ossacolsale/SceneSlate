@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
 Name=SceneSlate
-Comment=Catalogazione del girato video e audio
-Exec=sh -c 'cd "$(dirname "$0")" && exec python3 scene_slate.py' %k
+Comment=Video and audio footage catalog
+Exec=sh -c 'cd "$(dirname "$1")" && exec python3 scene_slate.py' sceneslate %k
 Terminal=false
 Categories=AudioVideo;Video;Utility;
 Icon=video-x-generic

@@ -9,7 +9,29 @@ from pathlib import Path
 import subprocess
 import sys
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox, simpledialog
+from tkinter import ttk, filedialog as _filedialog, messagebox as _messagebox, simpledialog as _simpledialog
+from scene_i18n import LANGUAGES, translate
+
+_ACTIVE_LANGUAGE = 'en'
+
+class _TranslatedDialog:
+    """Translate dialog-owned labels without touching filenames or user data."""
+    def __init__(self, delegate): self._delegate=delegate
+    def __getattr__(self, name):
+        method=getattr(self._delegate,name)
+        def call(*args,**kwargs):
+            args=tuple(translate(a,_ACTIVE_LANGUAGE) if isinstance(a,str) else a for a in args)
+            for key in ('title','message','detail'):
+                if isinstance(kwargs.get(key),str): kwargs[key]=translate(kwargs[key],_ACTIVE_LANGUAGE)
+            if 'filetypes' in kwargs:
+                kwargs['filetypes']=[(translate(label,_ACTIVE_LANGUAGE), pattern) for label,pattern in kwargs['filetypes']]
+            return method(*args,**kwargs)
+        return call
+
+filedialog = _TranslatedDialog(_filedialog)
+messagebox = _TranslatedDialog(_messagebox)
+simpledialog = _TranslatedDialog(_simpledialog)
+
 
 import scene_core as core
 import scene_session as session
@@ -48,6 +70,7 @@ class FileBrowser(ttk.Frame):
         self.all_var = tk.BooleanVar(value=False)
         self.sort_var = tk.StringVar(value='name_asc')
         self.sort_label_var = tk.StringVar(value='Nome A → Z')
+        self.sort_picker = None
         self.only_unused_var = tk.BooleanVar(value=False)
         self.highlight_unused_var = tk.BooleanVar(value=True)
         self.recursive_var = tk.BooleanVar(value=False)
@@ -73,6 +96,7 @@ class FileBrowser(ttk.Frame):
         ttk.Label(row, text='Ordina:').pack(side='left')
         sort_picker = ttk.Combobox(row, textvariable=self.sort_label_var, state='readonly', width=23,
                                    values=list(self.SORTS), style='Sort.TCombobox')
+        self.sort_picker = sort_picker
         sort_picker.pack(side='left', padx=(5,0))
         self.sort_label_var.trace_add('write', self.on_sort_label)
         row2 = ttk.Frame(self, style='Panel.TFrame'); row2.pack(fill='x', pady=(0,4))
@@ -111,8 +135,21 @@ class FileBrowser(ttk.Frame):
         self._suspend_refresh = False
         self.navigate(self.path, update_catalog=False)
 
+    def sort_labels(self):
+        return {self.app.tr(label): mode for label, mode in self.SORTS.items()}
+
+    def relabel(self):
+        self._suspend_refresh = True
+        labels = self.sort_labels()
+        self.sort_picker.configure(values=list(labels))
+        self.sort_label_var.set(next(k for k,v in labels.items() if v == self.sort_var.get()))
+        self._suspend_refresh = False
+        for col, original in (('#0','Nome'), ('size','Dimensione'), ('date','Creazione*'), ('type','Tipo')):
+            self.tree.heading(col,text=self.app.tr(original))
+        self.refresh()
+
     def on_sort_label(self, *_):
-        mode = self.SORTS.get(self.sort_label_var.get())
+        mode = self.sort_labels().get(self.sort_label_var.get(), self.SORTS.get(self.sort_label_var.get()))
         if mode:
             self.sort_var.set(mode)
             self.settings_changed()
@@ -182,7 +219,7 @@ class FileBrowser(ttk.Frame):
         try:
             paths = core.sort_directory_entries(list(self._entries()), self.sort_var.get())
         except OSError as exc:
-            self.count_var.set(f'Impossibile leggere la cartella: {exc}')
+            self.count_var.set(self.app.tr(f'Impossibile leggere la cartella: {exc}'))
             return
         count = unused_count = 0
         for path, isdir, stat_info in paths:
@@ -222,7 +259,7 @@ class FileBrowser(ttk.Frame):
         elif scroll and not self.saved_selection:
             self.tree.yview_moveto(scroll)
         note = ' · m = data modifica (creazione non disponibile)' if sys.platform != 'win32' else ''
-        self.count_var.set(f'{count} file · {unused_count} non associati · ● = libero{note}')
+        self.count_var.set(self.app.tr(f'{count} file · {unused_count} non associati · ● = libero{note}'))
 
     def selected_files(self):
         return [p for i in self.tree.selection() if (p := Path(i)).is_file()]
@@ -245,7 +282,7 @@ class FileBrowser(ttk.Frame):
         mode = state.get('sort', 'name_asc')
         if mode not in self.SORTS.values(): mode = 'name_asc'
         self.sort_var.set(mode)
-        self.sort_label_var.set(next(k for k,v in self.SORTS.items() if v == mode))
+        self.sort_label_var.set(next(k for k,v in self.sort_labels().items() if v == mode))
         for key,var in [('all_files',self.all_var), ('only_unused',self.only_unused_var),
                         ('highlight_unused',self.highlight_unused_var), ('recursive',self.recursive_var)]:
             var.set(bool(state.get(key, key == 'highlight_unused')))
@@ -303,6 +340,12 @@ class SceneSlateApp:
         self.filepath=None
         self._session_dir=session.config_dir()
         self._session= session.read_state(self._session_dir)
+        self.language = self._session.get('language') if self._session.get('language') in LANGUAGES else 'en'
+        global _ACTIVE_LANGUAGE
+        _ACTIVE_LANGUAGE = self.language
+        self.language_var = tk.StringVar(value=LANGUAGES[self.language])
+        self._ui_labels = {}
+        self._menu_labels = {}
         self._session_after_id=None
         self._ready=False
         self._restoring=False
@@ -314,7 +357,8 @@ class SceneSlateApp:
         self.dragging=None
         self.drag_popup=None
         self.changed_unsaved=False
-        self.status_var=tk.StringVar(value='Pronto. Crea una scena, seleziona uno shot e trascinaci video o audio.')
+        self._last_notice_raw='Pronto. Crea una scena, seleziona uno shot e trascinaci video o audio.'
+        self.status_var=tk.StringVar(value=self.tr(self._last_notice_raw))
         self.notes_scene_var=tk.StringVar()
         self.notes_shot_var=tk.StringVar()
         self.notes_subshot_var=tk.StringVar()
@@ -327,12 +371,13 @@ class SceneSlateApp:
         self._updating=False
         self.make_styles()
         self.make_ui()
+        self.localize_ui()
         self.shortcuts()
         self.refresh_scene_tree(select=None)
         self.root.protocol('WM_DELETE_WINDOW',self.close)
         self.root.minsize(1140,720)
         self.root.geometry('1550x890')
-        self.root.title(APP_NAME+' — Nuovo catalogo')
+        self.root.title(APP_NAME+' — '+self.tr('Nuovo catalogo'))
         self.root.bind('<Configure>',lambda e:self.queue_save_session() if e.widget is self.root else None)
         self._ready=True
 
@@ -375,6 +420,12 @@ class SceneSlateApp:
         ttk.Label(title_frame,text='SceneSlate',style='Title.TLabel').pack(anchor='w')
         ttk.Label(title_frame,text='Catalogazione riprese  •  Associazioni video/audio  •  Export Resolve',style='Sub.TLabel').pack(anchor='w')
         actions=ttk.Frame(header,style='Root.TFrame');actions.pack(side='right')
+        language_picker=ttk.Combobox(actions,textvariable=self.language_var,
+                values=list(LANGUAGES.values()),state='readonly',width=10,style='Sort.TCombobox')
+        language_picker.pack(side='right',padx=(4,0))
+        ttk.Label(actions,text='Lingua:',style='Sub.TLabel').pack(side='right',padx=(12,0))
+        language_picker.bind('<<ComboboxSelected>>',self.change_language)
+        self.language_picker=language_picker
         for label,cmd in [('Nuovo',self.new_project),('Apri…',self.open_project),('Salva',self.save),('Salva con nome…',self.save_as),('Esporta…',self.export),('↶ Annulla',self.undo)]:
             ttk.Button(actions,text=label,command=cmd).pack(side='left',padx=3)
         paned=ttk.Panedwindow(self.root,orient='horizontal');paned.pack(fill='both',expand=True,padx=14,pady=(0,10))
@@ -495,6 +546,52 @@ class SceneSlateApp:
         status=tk.Label(self.root,textvariable=self.status_var,anchor='w',bg='#0c1421',fg='#c8d7e9',font=('Segoe UI',9),padx=14,pady=8)
         status.pack(fill='x')
 
+    def tr(self,message):
+        return translate(message,self.language)
+
+    def localize_ui(self):
+        """Relabel existing widgets in place: changing language never loses focus, media or edits."""
+        def visit(widget):
+            try:
+                current = widget.cget('text')
+                if widget not in self._ui_labels:
+                    self._ui_labels[widget] = current
+                widget.configure(text=self.tr(self._ui_labels[widget]))
+            except (tk.TclError,AttributeError,KeyError):
+                pass
+            if isinstance(widget,tk.Menu):
+                try:
+                    for i in range(widget.index('end')+1):
+                        if widget.type(i) not in ('command','cascade','checkbutton','radiobutton'): continue
+                        key=(widget,i)
+                        if key not in self._menu_labels:
+                            self._menu_labels[key]=widget.entrycget(i,'label')
+                        widget.entryconfigure(i,label=self.tr(self._menu_labels[key]))
+                except (tk.TclError,TypeError): pass
+            for child in widget.winfo_children():visit(child)
+        visit(self.root)
+        visit(self.scene_context)
+        for browser in (self.video_browser,self.audio_browser): browser.relabel()
+        self.media_tree.heading('take',text=self.tr('Ciak'))
+        self.media_tree.heading('vq',text='B/R/S')
+        self.media_tree.heading('aq',text='B/R/S')
+        self.scene_count_var.set(self.tr(self.scene_count_var.get()))
+        self.side_var.set(self.tr('Lato attivo: ')+self.active_side.upper())
+        self.status_var.set(self.tr(self._last_notice_raw))
+        self.update_title()
+        # Scene tree / take headings are generated for the currently selected node.
+        self.refresh_scene_tree()
+
+    def change_language(self,event=None):
+        new = next((k for k,v in LANGUAGES.items() if v == self.language_var.get()),'en')
+        if new == self.language:return
+        self.commit_notes()
+        self.language=new
+        global _ACTIVE_LANGUAGE
+        _ACTIVE_LANGUAGE=new
+        self.localize_ui()
+        self.queue_save_session()
+
     def shortcuts(self):
         self.root.bind_all('<Control-s>',lambda e:self.save())
         self.root.bind_all('<Control-o>',lambda e:self.open_project())
@@ -503,7 +600,9 @@ class SceneSlateApp:
         self.root.bind_all('<Control-c>',self.copy_shortcut)
         self.root.bind_all('<Control-v>',self.paste_shortcut)
 
-    def notice(self,message):self.status_var.set(message)
+    def notice(self,message):
+        self._last_notice_raw=message
+        self.status_var.set(self.tr(message))
 
     def queue_save_session(self):
         if not self._ready or self._restoring:return
@@ -515,7 +614,7 @@ class SceneSlateApp:
     def session_data(self):
         selected=self.scene_tree.selection()
         if selected:self.last_tree_selection=selected[0]
-        return {'version':2, 'last_catalog':str(self.filepath) if self.filepath else None,
+        return {'version':3, 'language':self.language, 'last_catalog':str(self.filepath) if self.filepath else None,
                 'selected_scene_shot':self.last_tree_selection,
                 'selected_take':self.last_take_number,'active_side':self.active_side,
                 'only_empty':self.only_empty_var.get(),
@@ -532,8 +631,9 @@ class SceneSlateApp:
         except OSError as exc:self.notice(f'Impossibile salvare le preferenze di sessione: {exc}')
 
     def _remove_draft(self):
-        try:session.draft_file(self._session_dir).unlink(missing_ok=True)
-        except OSError:pass
+        for draft in (session.draft_file(self._session_dir), session.legacy_draft_file(self._session_dir)):
+            try:draft.unlink(missing_ok=True)
+            except OSError:pass
 
     def startup(self, explicit_project=None):
         """Prefer CLI project, then previous catalog, then autosaved unnamed draft."""
@@ -549,8 +649,8 @@ class SceneSlateApp:
             except (OSError,ValueError,KeyError,TypeError) as exc:
                 self.notice(f'Ultimo catalogo non disponibile: {exc}')
         if not loaded and not explicit_project:
-            draft=session.draft_file(self._session_dir)
-            if draft.is_file() and not state.get('last_catalog'):
+            draft = next((p for p in (session.draft_file(self._session_dir), session.legacy_draft_file(self._session_dir)) if p.is_file()), None)
+            if draft is not None and not state.get('last_catalog'):
                 try:
                     self.catalog=core.load_catalog(draft)
                     self.filepath=None
@@ -600,7 +700,7 @@ class SceneSlateApp:
         self.queue_save_session()
 
     def update_title(self):
-        path=Path(self.filepath).name if self.filepath else 'Senza nome'
+        path=Path(self.filepath).name if self.filepath else self.tr('Senza nome')
         self.root.title(f'{APP_NAME} — {path}' + (' *' if self.changed_unsaved else ''))
 
     def selected_ids(self):
@@ -686,7 +786,7 @@ class SceneSlateApp:
             sym='○' if empty and self.highlight_empty_var.get() else '▣'
             tags=('empty_scene',) if empty and self.highlight_empty_var.get() else ('scene',)
             self.scene_tree.insert('','end',iid=sid,
-                text=f"{sym}  {core.label(self.catalog,scene['number'])}    ({len(scene['shots'])} shot · {videos}V / {audios}A)",
+                text=self.tr(f"{sym}  {core.label(self.catalog,scene['number'])}    ({len(scene['shots'])} shot · {videos}V / {audios}A)"),
                 tags=tags,open=True)
             for sh in visible_shots:
                 all_shot_takes=[t for container in [sh]+sh.get('subshots',[]) for t in container['takes']]
@@ -698,7 +798,7 @@ class SceneSlateApp:
                 tag=('empty_shot',) if empty_sh and self.highlight_empty_var.get() else ('shot',)
                 padding=self.catalog['settings']['padding']
                 self.scene_tree.insert(sid,'end',iid=tid,
-                    text=f"{prefix}{self.catalog['settings']['shot_label']} {str(sh['number']).zfill(padding)}    {v} video / {a} audio",
+                    text=self.tr(f"{prefix}{self.catalog['settings']['shot_label']} {str(sh['number']).zfill(padding)}    {v} video / {a} audio"),
                     tags=tag,open=True)
                 for sub in sh.get('subshots',[]):
                     sub_empty=core.empty_subshot(sub)
@@ -715,7 +815,7 @@ class SceneSlateApp:
         n_scene=sum(core.empty_scene(s) for s in self.catalog['scenes'])
         n_shot=sum(core.empty_shot(sh) for s in self.catalog['scenes'] for sh in s['shots'])
         n_sub=sum(core.empty_subshot(u) for s in self.catalog['scenes'] for sh in s['shots'] for u in sh.get('subshots',[]))
-        self.scene_count_var.set(f'{n_scene} scene · {n_shot} shot · {n_sub} sotto-shot senza file · ○ = vuoto')
+        self.scene_count_var.set(self.tr(f'{n_scene} scene · {n_shot} shot · {n_sub} sotto-shot senza file · ○ = vuoto'))
         self._updating=False
         self.on_scene_select()
 
@@ -752,14 +852,15 @@ class SceneSlateApp:
         if select_take is None:select_take=self.last_take_number
         self._updating=True
         self.media_tree.delete(*self.media_tree.get_children())
-        self.side_var.set('Lato attivo: '+self.active_side.upper())
+        self.side_var.set(self.tr('Lato attivo: ')+self.active_side.upper())
+        self.media_tree.heading('take',text=self.tr('Ciak'))
         self.media_tree.heading('video',text=('▶ VIDEO' if self.active_side==VIDEO else 'VIDEO'))
         self.media_tree.heading('audio',text=('▶ AUDIO' if self.active_side==AUDIO else 'AUDIO'))
         if shot is None:
-            self.detail_label.config(text='CIAK E ABBINAMENTI / SELEZIONA UNO SHOT')
+            self.detail_label.config(text=self.tr('CIAK E ABBINAMENTI / SELEZIONA UNO SHOT'))
         else:
             sub=core.subshot_for(self.catalog,n,h,u) if u else None
-            self.detail_label.config(text=core.label(self.catalog,n,h,sub['name'] if sub else None).upper()+' / CIAK')
+            self.detail_label.config(text=self.tr(core.label(self.catalog,n,h,sub['name'] if sub else None).upper()+' / CIAK'))
             for t in sorted(shot['takes'],key=lambda x:x['number']):
                 v,a=t['video'],t['audio']
                 def fmt(m,side):
@@ -1103,6 +1204,14 @@ class SceneSlateApp:
             widget=widget.master
         return False
 
+    def localize_dialog(self,win):
+        def visit(widget):
+            try:widget.configure(text=self.tr(widget.cget('text')))
+            except (tk.TclError,AttributeError):pass
+            for child in widget.winfo_children():visit(child)
+        visit(win)
+        win.title(self.tr(win.title()))
+
     def settings(self):
         win=tk.Toplevel(self.root);win.title('Convenzione nomi');win.configure(bg=self.panel);win.resizable(False,False)
         win.transient(self.root);win.grab_set()
@@ -1126,6 +1235,7 @@ class SceneSlateApp:
         buttons=ttk.Frame(body,style='Panel.TFrame');buttons.grid(row=4,column=0,columnspan=2,sticky='e',pady=(12,0))
         ttk.Button(buttons,text='Annulla',command=win.destroy).pack(side='left',padx=5)
         ttk.Button(buttons,text='Applica',style='Primary.TButton',command=apply).pack(side='left')
+        self.localize_dialog(win)
         center_window(win,self.root,460,325)
 
     def new_project(self):
@@ -1182,7 +1292,7 @@ class SceneSlateApp:
 
     def save_as(self):
         self.commit_notes()
-        p=filedialog.asksaveasfilename(parent=self.root,title='Salva catalogo',defaultextension='.json',initialfile='mio_catalogo.sceneslate.json',filetypes=[('Catalogo JSON','*.json')])
+        p=filedialog.asksaveasfilename(parent=self.root,title='Salva catalogo',defaultextension='.json',initialfile='my_catalog.sceneslate.json',filetypes=[('Catalogo JSON','*.json')])
         if not p:return False
         self.filepath=p
         result=self.save()
@@ -1198,7 +1308,7 @@ class SceneSlateApp:
         try:count,warnings=core.export_all(self.catalog,dest)
         except (OSError,ValueError) as exc:
             messagebox.showerror('Esportazione non riuscita',str(exc),parent=self.root);return
-        text=f'Esportati in:\n{dest}\n\n• catalogo_completo.csv\n• riepilogo_shot.csv\n• resolve_metadata.csv ({count} file)\n• report_esportazione.txt'
+        text=f'Exported to:\n{dest}\n\n• full_catalog.csv\n• shot_summary.csv\n• resolve_metadata.csv ({count} files)\n• export_report.txt'
         if warnings:text+=f'\n\n{len(warnings)} avvisi nel report (alcune righe potrebbero essere escluse).'
         messagebox.showinfo('Esportazione completata',text,parent=self.root)
         self.notice(f'Esportazione completa · {count} file nel CSV Resolve · {len(warnings)} avvisi')
@@ -1222,17 +1332,17 @@ class SceneSlateApp:
 
 def main():
     import argparse
-    parser=argparse.ArgumentParser(description='SceneSlate - catalogazione riprese video/audio')
-    parser.add_argument('--export',metavar='CATALOGO.json',help='Esporta senza interfaccia')
-    parser.add_argument('--out',metavar='CARTELLA',help='Cartella CSV per --export')
-    parser.add_argument('project',nargs='?',help='Catalogo da aprire')
+    parser=argparse.ArgumentParser(description='SceneSlate - video/audio footage logging')
+    parser.add_argument('--export',metavar='CATALOG.json',help='Export without GUI')
+    parser.add_argument('--out',metavar='DIRECTORY',help='CSV output directory for --export')
+    parser.add_argument('project',nargs='?',help='Catalog to open')
     args=parser.parse_args()
     if args.export:
-        if not args.out:parser.error('--export richiede --out CARTELLA')
+        if not args.out:parser.error('--export requires --out DIRECTORY')
         c=core.load_catalog(args.export)
         count,warnings=core.export_all(c,args.out)
-        print(f'Esportati {count} file per Resolve; {len(warnings)} avvisi.')
-        for w in warnings:print('AVVISO:',w)
+        print(f'Exported {count} files for Resolve; {len(warnings)} warnings.')
+        for w in warnings:print('WARNING:',w)
         return
     root=tk.Tk();app=SceneSlateApp(root)
     app.startup(args.project)

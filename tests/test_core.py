@@ -40,24 +40,24 @@ class CoreTests(unittest.TestCase):
         rows,warnings=c.resolve_rows(self.cat)
         self.assertEqual(len(rows),2);self.assertFalse(warnings)
         self.assertEqual({r['Take'] for r in rows},{'1'})
-        self.assertTrue(any('QUALITA_R' in r['Keywords'] for r in rows))
+        self.assertTrue(any('QUALITY_R' in r['Keywords'] for r in rows))
         self.assertTrue(any('A0001.WAV' in r['Comments'] for r in rows))
         out=self.dir/'export';c.export_all(self.cat,out)
         with (out/'resolve_metadata.csv').open('rb') as f:
             self.assertTrue(f.read().startswith(b'File Name,Clip Directory,Scene,Shot,Take,'))
-        with (out/'catalogo_completo.csv').open(encoding='utf-8-sig',newline='') as f:
+        with (out/'full_catalog.csv').open(encoding='utf-8-sig',newline='') as f:
             data=list(csv.DictReader(f,delimiter=';'))
         self.assertEqual(len(data),1)
-        self.assertEqual(data[0]['Qualità audio'],'R')
-        self.assertEqual(data[0]['Esiste video'],'SI')
+        self.assertEqual(data[0]['Audio quality'],'R')
+        self.assertEqual(data[0]['Video exists'],'YES')
 
     def test_unpaired_export_and_missing_audio(self):
         c.add_media(self.cat,1,1,self.a,'video')
         out=self.dir/'e';c.export_all(self.cat,out)
-        with (out/'catalogo_completo.csv').open(encoding='utf-8-sig',newline='') as f:
+        with (out/'full_catalog.csv').open(encoding='utf-8-sig',newline='') as f:
             row=list(csv.DictReader(f,delimiter=';'))[0]
         self.assertEqual(row['Audio'],'')
-        self.assertEqual(row['Ciak'],'1')
+        self.assertEqual(row['Take'],'1')
 
     def test_pairing_is_explicit_not_guessed(self):
         c.add_media(self.cat,1,1,self.a,'video')
@@ -102,7 +102,7 @@ class CoreTests(unittest.TestCase):
         c.add_media(self.cat,1,1,self.a,'video')
         c.add_shot(self.cat,1,2);c.add_media(self.cat,1,2,self.a,'video')
         rows,warnings=c.resolve_rows(self.cat)
-        self.assertFalse(rows);self.assertEqual(len(warnings),1);self.assertIn('ESCLUSO',warnings[0])
+        self.assertFalse(rows);self.assertEqual(len(warnings),1);self.assertIn('SKIPPED',warnings[0])
 
     def test_atomic_save_relative_move(self):
         c.add_media(self.cat,1,1,self.a,'video')
@@ -152,6 +152,6 @@ class CoreTests(unittest.TestCase):
     def test_missing_media_reported(self):
         c.add_media(self.cat,1,1,self.b,'audio');self.b.unlink()
         rows,warnings=c.resolve_rows(self.cat)
-        self.assertEqual(len(rows),1);self.assertIn('non disponibile',warnings[0])
+        self.assertEqual(len(rows),1);self.assertIn('file not found',warnings[0])
 
 if __name__=='__main__':unittest.main()

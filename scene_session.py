@@ -51,4 +51,9 @@ def write_state(state, directory=None):
 
 
 def draft_file(directory=None):
+    return Path(directory or config_dir()) / 'autosaved_draft.sceneslate.json'
+
+
+def legacy_draft_file(directory=None):
+    # Used by versions through 3.1 for non-destructive recovery.
     return Path(directory or config_dir()) / 'bozza_autosalvata.sceneslate.json'

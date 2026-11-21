@@ -1,6 +1,6 @@
 @echo off
 cd /d "%~dp0"
-rem Fallback console launcher for troubleshooting; prefer SceneSlate.vbs.
+REM Troubleshooting launcher. Prefer SceneSlate.vbs for a console-free launch.
 where pyw >nul 2>nul
 if %errorlevel%==0 (
   start "" pyw -3 "%~dp0scene_slate.pyw" %*
@@ -11,5 +11,5 @@ if %errorlevel%==0 (
   start "" pythonw "%~dp0scene_slate.pyw" %*
   exit /b 0
 )
-echo Python GUI non trovato. Installa Python 3 con Tkinter da python.org.
+echo Python GUI launcher not found. Install Python 3 with Tkinter from python.org.
 pause
