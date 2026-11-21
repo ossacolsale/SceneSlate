@@ -10,6 +10,7 @@
 - Renamed `avvia_windows.bat` to `launch_windows.bat`, `avvia_linux.sh` to `launch_linux.sh`, and `esempio.sceneslate.json` to `example.sceneslate.json`.
 - Renamed unnamed autosave `bozza_autosalvata.sceneslate.json` to `autosaved_draft.sceneslate.json`, with legacy draft recovery preserved.
 - Added localization and legacy-compatibility tests. Existing catalog data and media paths remain untouched.
+- Normalized Windows junction/8.3 short-path aliases for reliable file matching and relative media path recovery.
 
 ## 3.1 — Optional sub-shots, reusing media, notes
 

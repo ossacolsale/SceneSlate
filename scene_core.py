@@ -183,7 +183,10 @@ def iter_media_context(c):
                     yield scene, shot, sub, take, kind, take[kind]
 
 def canonical(path):
-    return os.path.normpath(os.path.abspath(os.path.expanduser(str(path))))
+    # Resolve symlinks/junctions and Windows 8.3 aliases consistently.
+    # This also makes relative media paths portable when the original path
+    # uses RUNNER~1 while the saved catalog path uses its long spelling.
+    return os.path.realpath(os.path.normpath(os.path.abspath(os.path.expanduser(str(path)))))
 
 
 def identity(path):
@@ -550,7 +553,7 @@ def file_time_from_path(path):
 
 
 def safe_relative(path,base):
-    try:return os.path.relpath(path,base).replace(os.sep,'/')
+    try:return os.path.relpath(canonical(path),canonical(base)).replace(os.sep,'/')
     except ValueError:return None
 
 
