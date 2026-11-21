@@ -75,7 +75,7 @@ class GuiTests(unittest.TestCase):
         from scene_slate import SceneSlateApp
         self.root=tk.Tk();self.app=SceneSlateApp(self.root);self.app.startup()
         self.root.update()
-        self.assertEqual(Path(self.app.filepath),self.basedir/'mio.sceneslate.json')
+        self.assertEqual(Path(self.app.filepath),Path(core.canonical(self.basedir/'mio.sceneslate.json')))
         self.assertEqual(self.app.selected_ids(),(2,1))
         self.assertTrue(self.app.only_empty_var.get())
         self.assertEqual(self.app.video_browser.sort_var.get(),'created_desc')
@@ -83,8 +83,8 @@ class GuiTests(unittest.TestCase):
         self.assertTrue(self.app.video_browser.only_unused_var.get())
         self.assertEqual(self.app.video_browser.tree.selection(),(core.canonical(self.v2),))
         self.assertEqual(self.app.audio_browser.filter_var.get(),'A001')
-        self.assertEqual(self.app.video_browser.path,self.vid)
-        self.assertEqual(self.app.audio_browser.path,self.aud)
+        self.assertEqual(self.app.video_browser.path,Path(core.canonical(self.vid)))
+        self.assertEqual(self.app.audio_browser.path,Path(core.canonical(self.aud)))
 
     def test_pairing_keyboard_side_quality_and_resume(self):
         core.add_scene(self.app.catalog,3);core.add_shot(self.app.catalog,3,2)
@@ -99,7 +99,7 @@ class GuiTests(unittest.TestCase):
         self.assertEqual(self.app.switch_side('audio'),'break')
         self.app.attach_files('audio',[self.a1])
         take=core.shot_for(self.app.catalog,3,2)['takes'][0]
-        self.assertEqual(take['audio']['path'],str(self.a1))
+        self.assertEqual(take['audio']['path'],core.canonical(self.a1))
         self.assertEqual(self.app.set_quality('R'),'break')
         self.assertEqual(take['audio']['quality'],'R')
         self.assertEqual(take['video']['quality'],'B')

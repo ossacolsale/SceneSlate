@@ -108,14 +108,14 @@ class CoreTests(unittest.TestCase):
         c.add_media(self.cat,1,1,self.a,'video')
         orig=self.dir/'job'/'catalog.json';orig.parent.mkdir()
         c.save_catalog(self.cat,orig);loaded=c.load_catalog(orig)
-        self.assertEqual(loaded['scenes'][0]['shots'][0]['takes'][0]['video']['path'],str(self.a))
+        self.assertEqual(loaded['scenes'][0]['shots'][0]['takes'][0]['video']['path'],c.canonical(self.a))
         import shutil
         newroot=self.dir/'moved'
         shutil.copytree(self.dir/'job',newroot/'job')
         shutil.copytree(self.dir/'media',newroot/'media')
         self.a.unlink()
         restored=c.load_catalog(newroot/'job'/'catalog.json')
-        self.assertEqual(Path(restored['scenes'][0]['shots'][0]['takes'][0]['video']['path']),newroot/'media'/'C0001.MOV')
+        self.assertEqual(Path(restored['scenes'][0]['shots'][0]['takes'][0]['video']['path']),Path(c.canonical(newroot/'media'/'C0001.MOV')))
 
     def test_v1_migration_preserves_media_and_does_not_guess_pair(self):
         old={'version':1,'name':'Legacy','settings':self.cat['settings'],

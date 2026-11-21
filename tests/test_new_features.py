@@ -58,7 +58,7 @@ class SceneSlate31Tests(unittest.TestCase):
         pair=c.take_for(restored,1,1,1,subid)
         self.assertEqual(pair['description'],'Ciak con migliore entrata')
         self.assertEqual(pair['annotation'],'Rumore del frigo al secondo 7')
-        self.assertEqual(pair['audio']['path'],str(self.audio))
+        self.assertEqual(pair['audio']['path'],c.canonical(self.audio))
         out=self.home/'out';c.export_all(restored,out)
         with (out/'full_catalog.csv').open(encoding='utf-8-sig',newline='') as f:
             rows=list(csv.DictReader(f,delimiter=';'))
@@ -84,7 +84,7 @@ class SceneSlate31Tests(unittest.TestCase):
         self.assertEqual(dest['subshots'][0]['name'],'A')
         self.assertTrue(dest['subshots'][1]['name'].startswith('A (copia'))
         self.assertTrue(all(sub['takes'][0]['annotation']=='Buona luce' for sub in dest['subshots']))
-        self.assertTrue(all(sub['takes'][0]['video']['path']==str(self.video) for sub in dest['subshots']))
+        self.assertTrue(all(sub['takes'][0]['video']['path']==c.canonical(self.video) for sub in dest['subshots']))
         # Media still exists once on disk and the Resolve CSV cannot assign
         # contradictory scene/take metadata to one Media Pool clip.
         rows, warnings=c.resolve_rows(self.cat)
