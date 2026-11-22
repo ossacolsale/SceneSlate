@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.4 — Opt-in FFmpeg setup on Windows
+
+- User-approved installation of ffmpeg.exe and ffprobe.exe into the per-user configuration directory; no administrator rights or PATH changes.
+- Download source is the gyan.dev Windows build provider linked by ffmpeg.org; verify its published SHA-256 and extract only the required binaries.
+- Non-blocking progress dialog, safe cancellation and recovery without modifying source footage.
+- Ask again on each launch when dependencies are missing, unless “Do not ask again” is enabled. Restore setup and reminders using the Tools menu.
+- Detect managed binaries automatically and retry take synchronization previously blocked solely because of missing FFmpeg/ffprobe.
+- Preserve English/Italian UI and test download integrity, rollback, setting persistence and GUI controls without any live network access.
+
 ## 3.3 — Waveform sync and non-destructive review timelines
 
 - Background audio synchronization for explicitly paired files using embedded camera audio versus external sound via FFmpeg, without modifying media.
