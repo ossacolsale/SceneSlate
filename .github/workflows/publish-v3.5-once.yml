@@ -36,7 +36,7 @@ jobs:
           NOTES
           gh release create v3.5.0 \
             --repo "$GITHUB_REPOSITORY" \
-            --target df73aae5c6ff24ca9fee7a05967f5a2112bc4043 \
+            --target afbe28078b2beeace9266fbc5899e8af7caefd2d \
             --title "SceneSlate 3.5.0" \
             --notes-file /tmp/release_notes.md \
             --draft
@@ -53,7 +53,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: df73aae5c6ff24ca9fee7a05967f5a2112bc4043
+          ref: afbe28078b2beeace9266fbc5899e8af7caefd2d
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
