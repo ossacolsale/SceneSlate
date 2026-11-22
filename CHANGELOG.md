@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.5.0 — Manual precision synchronization editor
+
+- Added a bilingual waveform editor for paired camera and external recorder audio, with interactive waveform drag, pan/zoom, numeric offsets, and ±1/10/100 ms and 1-second nudges.
+- Added non-destructive 7-second stereo audition previews: camera left/recorder right, mixed, and independent solo modes. Windows uses native WAV playback; Linux supports ffplay/paplay/aplay.
+- Added explicit human confirmation of synchronization, saved with a source fingerprint, method and manual verification flag.
+- Prevented in-flight automatic sync results from overwriting verified manual offsets. Automatic retry prompts before replacing human approval.
+- Preserved existing catalog schema, CSV fields, sync status aggregation and XML timeline exports. Documented the whole-frame precision limit of FCP7 XML.
+- Added regression tests for positive and negative offsets, stereo preview modes, GUI approval, persistence and worker-race protection.
+
 ## 3.4 — Opt-in FFmpeg setup on Windows
 
 - User-approved installation of ffmpeg.exe and ffprobe.exe into the per-user configuration directory; no administrator rights or PATH changes.
