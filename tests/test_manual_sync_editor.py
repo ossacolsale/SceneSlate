@@ -98,7 +98,8 @@ class EditorGuiTests(unittest.TestCase):
                 app.render_takes(select_take=1)
                 with patch.object(SyncEditor,'_load_waveforms',
                     return_value=(array.array('f',[0.]*800),array.array('f',[0.]*800),1.)), \
-                    patch('scene_sync_editor.messagebox.askyesno',return_value=True):
+                    patch('scene_sync_editor.messagebox.askyesno',return_value=True), \
+                    patch('scene_sync.executables',return_value=('ffmpeg','ffprobe')):
                     app.edit_sync()
                     editor=root.winfo_children()[-1]
                     buttons=[]
