@@ -1,0 +1,121 @@
+name: Publish SceneSlate v3.7.0 once
+
+# Temporary workflow: no Actions artifacts are uploaded.
+# Source is pinned to the reviewed feature commit.
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/publish-v3.7-once.yml]
+
+permissions: {}
+
+concurrency:
+  group: sceneslate-v3.7.0-once
+  cancel-in-progress: false
+
+jobs:
+  create-draft:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create draft release against verified commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view v3.7.0 -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Draft already exists; continuing"
+            exit 0
+          fi
+          cat > /tmp/release-notes.md <<'NOTES'
+          ## SceneSlate 3.7.0 — More accurate and reliable audio synchronization
+
+          - Multiresolution audio synchronization combines waveform correlation, amplitude envelope matching, high-resolution local consensus and partial GCC-PHAT spectral whitening.
+          - Four independent high-energy verification windows reduce unnecessary REVIEW results while preventing misleading OK results for repeated dialogue/music.
+          - Fine offsets are resolved at 8 kHz (0.125-ms sample intervals, with peak interpolation). This is analysis resolution, not a guarantee of real-world alignment accuracy.
+          - Previous automatic waveform results are reanalyzed; manually approved offsets are never silently overwritten.
+          - Resolve FCP7 XML export now reports frame quantization, which can still introduce up to 20 ms rounding at 25 fps.
+          - Includes unreleased 3.6 improvements: new SceneSlate branding and app icon, cascading take-number edits, and linked scene/shot/sub-shot management.
+          - New cross-platform test coverage for repeated source audio, unrelated tracks, AAC, standard-library FFT fallback, link propagation and catalog migrations.
+
+          **Installation:** Download the ZIP for Windows or the tar.gz for Linux below. No system Python is required for standalone builds. FFmpeg and ffprobe are required for media decoding; on Windows, SceneSlate can install them with explicit consent. Originals are never modified. Verify critical takes by listening and inspect imported timelines in DaVinci Resolve.
+          NOTES
+          gh release create v3.7.0 \
+            --repo "$GITHUB_REPOSITORY" \
+            --target 5eface286a3d3683b66d9b04bf8c59e69a720da7 \
+            --title "SceneSlate 3.7.0" \
+            --notes-file /tmp/release-notes.md \
+            --draft
+
+  build:
+    needs: create-draft
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    steps:
+      - name: Checkout reviewed source
+        uses: actions/checkout@v5
+        with:
+          ref: 5eface286a3d3683b66d9b04bf8c59e69a720da7
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install NumPy
+        run: python -m pip install numpy
+      - name: Install Linux test dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y python3-tk xvfb ffmpeg
+      - name: Test Windows
+        if: runner.os == 'Windows'
+        run: python -m unittest discover -s tests -v
+      - name: Test Linux
+        if: runner.os == 'Linux'
+        run: xvfb-run -a python -m unittest discover -s tests -v
+      - name: Install PyInstaller
+        run: python -m pip install pyinstaller
+      - name: Build Windows standalone executable
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: python -m PyInstaller --onefile --windowed --noconfirm --name SceneSlate --paths . --icon sceneslate_logo.ico --add-data 'sceneslate_icon.png;.' --add-data 'sceneslate_logo.ico;.' scene_slate.pyw
+      - name: Build Linux standalone executable
+        if: runner.os == 'Linux'
+        shell: bash
+        run: python -m PyInstaller --onefile --windowed --noconfirm --name SceneSlate --paths . --add-data 'sceneslate_icon.png:.' --add-data 'sceneslate_logo.ico:.' scene_slate.py
+      - name: Package Windows executable
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path dist/SceneSlate.exe -DestinationPath "SceneSlate-v3.7.0-windows-x64.zip"
+      - name: Package Linux executable
+        if: runner.os == 'Linux'
+        shell: bash
+        run: tar -czf "SceneSlate-v3.7.0-linux-x64.tar.gz" -C dist SceneSlate
+      - name: Attach Windows binary to draft release
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload v3.7.0 "SceneSlate-v3.7.0-windows-x64.zip" --repo "$env:GITHUB_REPOSITORY" --clobber
+      - name: Attach Linux binary to draft release
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload v3.7.0 "SceneSlate-v3.7.0-linux-x64.tar.gz" --repo "$GITHUB_REPOSITORY" --clobber
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Publish only after both builds and tests succeeded
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit v3.7.0 --repo "$GITHUB_REPOSITORY" --draft=false
