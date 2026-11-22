@@ -377,6 +377,11 @@ class SceneSlateApp:
         self._editing_node_target=None
         self._editing_take_target=None
         self.only_unsynced_var=tk.BooleanVar(value=False)
+        self.sync_filter='any'
+        self.take_filter='any'
+        self.sync_filter_choice=tk.StringVar(value='All')
+        self.take_filter_choice=tk.StringVar(value='All')
+        self.details_expanded=False
         self._sync_worker=SyncWorker()
         self._sync_timer=None
         self.only_empty_var=tk.BooleanVar(value=False)
@@ -387,6 +392,7 @@ class SceneSlateApp:
         self.load_branding()
         self.make_styles()
         self.make_ui()
+        self.set_details_expanded(False)
         self.localize_ui()
         self.shortcuts()
         self.refresh_scene_tree(select=None)
@@ -525,12 +531,19 @@ class SceneSlateApp:
         ttk.Button(copy_row,text='↳ Incolla nella selezione',command=self.paste_selected).pack(side='left',padx=(0,5))
         ttk.Label(copy_row,text='Ctrl+C / Ctrl+V nella struttura',style='Muted.TLabel').pack(side='left')
         filter_row=ttk.Frame(left,style='Panel.TFrame');filter_row.pack(fill='x',pady=(6,0))
-        ttk.Checkbutton(filter_row,text='Solo elementi senza file',variable=self.only_empty_var,
-                        command=self.scene_filter_changed).pack(side='left',padx=(0,12))
+        ttk.Label(filter_row,text='SYNC:',style='Panel.TLabel').pack(side='left',padx=(0,4))
+        self.sync_filter_combo=ttk.Combobox(filter_row,textvariable=self.sync_filter_choice,
+                   width=13,state='readonly',style='Sort.TCombobox')
+        self.sync_filter_combo.pack(side='left',padx=(0,10))
+        self.sync_filter_combo.bind('<<ComboboxSelected>>',self._choose_sync_filter)
+        ttk.Label(filter_row,text='Takes:',style='Panel.TLabel').pack(side='left',padx=(0,4))
+        self.take_filter_combo=ttk.Combobox(filter_row,textvariable=self.take_filter_choice,
+                   width=14,state='readonly',style='Sort.TCombobox')
+        self.take_filter_combo.pack(side='left',padx=(0,10))
+        self.take_filter_combo.bind('<<ComboboxSelected>>',self._choose_take_filter)
         ttk.Checkbutton(filter_row,text='Evidenzia vuoti',variable=self.highlight_empty_var,
                         command=self.scene_filter_changed).pack(side='left')
-        ttk.Checkbutton(filter_row,text='Solo non sincronizzati',variable=self.only_unsynced_var,
-                        command=self.scene_filter_changed).pack(side='left',padx=(10,0))
+        self._configure_filter_choices()
         self.scene_count_var=tk.StringVar(value='')
         ttk.Label(left,textvariable=self.scene_count_var,style='Muted.TLabel').pack(anchor='w',pady=(3,0))
 
@@ -579,7 +592,10 @@ class SceneSlateApp:
             ttk.Button(r,text=f'{q} · {name}',command=lambda q=q:self.set_quality(q)).pack(side='left',padx=2)
         ttk.Label(left,text='←/→ sceglie VIDEO o AUDIO; ↑/↓ sceglie il ciak; B/R/S cambia la qualifica. Trascina un file sulla riga per abbinarlo.',
                   style='Muted.TLabel',wraplength=550).pack(anchor='w')
-        take_notes=ttk.Frame(left,style='Panel.TFrame');take_notes.pack(fill='x',pady=(8,0))
+        self.details_toggle=ttk.Button(left,text='▸ Descriptions / Notes',command=self.toggle_details)
+        self.details_toggle.pack(fill='x',pady=(7,1))
+        self.details_content=ttk.Frame(left,style='Panel.TFrame')
+        take_notes=ttk.Frame(self.details_content,style='Panel.TFrame');take_notes.pack(fill='x',pady=(4,0))
         ttk.Label(take_notes,text='Descrizione ciak:',style='Panel.TLabel').grid(row=0,column=0,sticky='w',pady=3)
         self.take_description=ttk.Entry(take_notes,textvariable=self.take_description_var)
         self.take_description.grid(row=0,column=1,sticky='ew',padx=7)
@@ -590,7 +606,7 @@ class SceneSlateApp:
         for entry in (self.take_description,self.take_annotation):
             entry.bind('<FocusOut>',lambda e:self.commit_notes())
             entry.bind('<Return>',lambda e:self.commit_notes())
-        n=ttk.Frame(left,style='Panel.TFrame');n.pack(fill='x',pady=(9,0))
+        n=ttk.Frame(self.details_content,style='Panel.TFrame');n.pack(fill='x',pady=(7,0))
         ttk.Label(n,text='Descrizione scena:',style='Panel.TLabel').grid(row=0,column=0,sticky='w',pady=3)
         self.scene_note=ttk.Entry(n,textvariable=self.notes_scene_var)
         self.scene_note.grid(row=0,column=1,sticky='ew',padx=7)
@@ -613,6 +629,89 @@ class SceneSlateApp:
 
     def tr(self,message):
         return translate(message,self.language)
+
+    @staticmethod
+    def _sync_filter_options():
+        return [('any','All'),('OK','OK'),('REVIEW','REVIEW'),('KO','KO'),
+                ('PENDING','WAIT'),('SINGLE','One-sided (SINGLE)'),('EMPTY','EMPTY'),
+                ('attention','Needs review')]
+
+    @staticmethod
+    def _take_filter_options():
+        return [('any','All'),('has','With takes'),('none','Without takes')]
+
+    def _configure_filter_choices(self):
+        for widget,var,options,current in (
+            (self.sync_filter_combo,self.sync_filter_choice,self._sync_filter_options(),self.sync_filter),
+            (self.take_filter_combo,self.take_filter_choice,self._take_filter_options(),self.take_filter)):
+            widget.configure(values=[self.tr(label) for code,label in options])
+            var.set(next((self.tr(label) for code,label in options if code==current),self.tr('All')))
+
+    def _choose_sync_filter(self,event=None):
+        self.sync_filter=next((code for code,label in self._sync_filter_options()
+                    if self.tr(label)==self.sync_filter_choice.get()),'any')
+        self.only_unsynced_var.set(False)
+        self.only_empty_var.set(False)
+        self.scene_filter_changed()
+
+    def _choose_take_filter(self,event=None):
+        self.take_filter=next((code for code,label in self._take_filter_options()
+                    if self.tr(label)==self.take_filter_choice.get()),'any')
+        self.only_empty_var.set(False)
+        self.scene_filter_changed()
+
+    def _filter_matches(self,takes):
+        status=scene_sync.node_status(takes)
+        sync_filter=('attention' if self.only_unsynced_var.get() else self.sync_filter)
+        take_filter=('none' if self.only_empty_var.get() else self.take_filter)
+        sync_ok = (sync_filter=='any' or status==sync_filter or
+                   (sync_filter=='SINGLE' and any(
+                       scene_sync.effective_status(t)=='SINGLE' for t in takes)) or
+                   (sync_filter=='attention' and status in ('KO','REVIEW','PENDING')))
+        take_ok = (take_filter=='any' or
+                   (take_filter=='has' and bool(takes)) or
+                   (take_filter=='none' and not takes))
+        return sync_ok and take_ok
+
+    def _render_details_toggle(self):
+        if hasattr(self,'details_toggle'):
+            self.details_toggle.configure(text=('▾ ' if self.details_expanded else '▸ ')+
+                            self.tr('Descriptions / Notes'))
+
+    def set_details_expanded(self,value):
+        new=bool(value)
+        self.details_expanded=new
+        if new:
+            if not self.details_content.winfo_manager():
+                self.details_content.pack(fill='x',pady=(0,4))
+        elif self.details_content.winfo_manager():
+            self.commit_notes()
+            self.details_content.pack_forget()
+        self._render_details_toggle()
+        self.queue_save_session()
+
+    def toggle_details(self):
+        self.set_details_expanded(not self.details_expanded)
+
+    def _linked_suffix(self,n,h=None,u=None):
+        try: refs=core.linked_refs(self.catalog,n,h,u)
+        except core.CatalogError:return ''
+        if len(refs)<=1:return ''
+        current=core.node_ref(n,h,u)
+        names=[]
+        for ref in refs:
+            if ref==current:continue
+            parts=ref.split(':')
+            if parts[0]=='scene':name=f'S{parts[1]}'
+            elif parts[0]=='shot':name=f'S{parts[1]}/#{parts[2]}'
+            else:
+                sub=core.subshot_for(self.catalog,int(parts[1]),int(parts[2]),parts[3])
+                name=f'S{parts[1]}/#{parts[2]}/{sub["name"] if sub else "?"}'
+            names.append(name)
+        names.sort()
+        shown=', '.join(names[:2])
+        if len(names)>2:shown+=f' +{len(names)-2}'
+        return ' ⇄ '+shown
 
     def localize_ui(self):
         """Relabel existing widgets in place: changing language never loses focus, media or edits."""
@@ -638,6 +737,8 @@ class SceneSlateApp:
         visit(self.scene_context)
         visit(self.tools_menu)
         for browser in (self.video_browser,self.audio_browser): browser.relabel()
+        self._configure_filter_choices()
+        self._render_details_toggle()
         self.media_tree.heading('take',text=self.tr('Ciak'))
         self.media_tree.heading('vq',text='B/R/S')
         self.media_tree.heading('aq',text='B/R/S')
@@ -827,6 +928,9 @@ class SceneSlateApp:
                 'selected_take':self.last_take_number,'active_side':self.active_side,
                 'only_empty':self.only_empty_var.get(),
                 'only_unsynced':self.only_unsynced_var.get(),
+                'sync_filter':self.sync_filter,
+                'take_filter':self.take_filter,
+                'details_expanded':self.details_expanded,
                 'highlight_empty':self.highlight_empty_var.get(),
                 'video':self.video_browser.get_state(),
                 'audio':self.audio_browser.get_state(),
@@ -868,6 +972,12 @@ class SceneSlateApp:
                 except (OSError,ValueError,KeyError,TypeError):pass
         self.only_empty_var.set(bool(state.get('only_empty',False)))
         self.only_unsynced_var.set(bool(state.get('only_unsynced',False)))
+        self.sync_filter=state.get('sync_filter','any')
+        if self.sync_filter not in dict(self._sync_filter_options()):self.sync_filter='any'
+        self.take_filter=state.get('take_filter','any')
+        if self.take_filter not in dict(self._take_filter_options()):self.take_filter='any'
+        self._configure_filter_choices()
+        self.set_details_expanded(bool(state.get('details_expanded',False)))
         self.highlight_empty_var.set(bool(state.get('highlight_empty',True)))
         geometry=state.get('geometry','')
         if isinstance(geometry,str) and geometry:
@@ -1092,21 +1202,15 @@ class SceneSlateApp:
         self._updating=True
         self.scene_tree.delete(*self.scene_tree.get_children())
         for scene in self.catalog['scenes']:
+            all_takes=[t for sh in scene['shots'] for t in self._all_takes(sh)]
             visible=[]
             for sh in scene['shots']:
-                if self.only_unsynced_var.get():
-                    direct=scene_sync.node_status(sh['takes']) not in ('EMPTY','OK')
-                    subs=[sub for sub in sh.get('subshots',[])
-                          if scene_sync.node_status(sub['takes']) not in ('EMPTY','OK')]
-                    if not direct and not subs:continue
-                else:
-                    subs=sh.get('subshots',[])
-                    if self.only_empty_var.get():
-                        subs=[u for u in subs if core.empty_subshot(u)]
-                        if not core.empty_shot(sh) and not subs:continue
-                visible.append((sh,subs))
-            if (self.only_empty_var.get() or self.only_unsynced_var.get()) and not visible:
-                if scene['shots'] or self.only_unsynced_var.get():continue
+                all_shot=self._all_takes(sh)
+                subs=[sub for sub in sh.get('subshots',[]) if self._filter_matches(sub['takes'])]
+                if self._filter_matches(all_shot) or subs:
+                    visible.append((sh,subs))
+            if not self._filter_matches(all_takes) and not visible:
+                continue
             all_takes=[t for sh in scene['shots'] for t in self._all_takes(sh)]
             videos=sum(bool(t.get('video')) for t in all_takes)
             audios=sum(bool(t.get('audio')) for t in all_takes)
@@ -1115,9 +1219,9 @@ class SceneSlateApp:
             empty=core.empty_scene(scene)
             sym='○' if empty and self.highlight_empty_var.get() else '▣'
             tags=('empty_scene',) if empty and self.highlight_empty_var.get() else ('sync_bad',) if status in ('KO','REVIEW') else ('scene',)
-            link_mark = '⇄ ' if scene.get('link_group') else ''
+            link_mark = self._linked_suffix(scene['number'])
             self.scene_tree.insert('','end',iid=sid,
-                text=self.tr(f"{sym}  {link_mark}{core.label(self.catalog,scene['number'])}    ({len(scene['shots'])} shot · {videos}V / {audios}A)"),
+                text=self.tr(f"{sym}  {core.label(self.catalog,scene['number'])}{link_mark}    ({len(scene['shots'])} shot · {videos}V / {audios}A)"),
                 values=(self._sync_label(status),),tags=tags,open=True)
             for sh,subs in visible:
                 all_shot=self._all_takes(sh)
@@ -1129,9 +1233,9 @@ class SceneSlateApp:
                 prefix='○  ' if empty_sh and self.highlight_empty_var.get() else '    '
                 tag=('empty_shot',) if empty_sh and self.highlight_empty_var.get() else ('sync_bad',) if status in ('KO','REVIEW') else ('shot',)
                 padding=self.catalog['settings']['padding']
-                link_mark = '⇄ ' if sh.get('link_group') else ''
+                link_mark = self._linked_suffix(scene['number'],sh['number'])
                 self.scene_tree.insert(sid,'end',iid=tid,
-                    text=self.tr(f"{prefix}{link_mark}{self.catalog['settings']['shot_label']} {str(sh['number']).zfill(padding)}    {v} video / {a} audio"),
+                    text=self.tr(f"{prefix}{self.catalog['settings']['shot_label']} {str(sh['number']).zfill(padding)}{link_mark}    {v} video / {a} audio"),
                     values=(self._sync_label(status),),tags=tag,open=True)
                 for sub in subs:
                     status=scene_sync.node_status(sub['takes'])
@@ -1141,16 +1245,16 @@ class SceneSlateApp:
                     uid=f"u:{scene['number']}:{sh['number']}:{sub['id']}"
                     prefix='○  ' if sub_empty and self.highlight_empty_var.get() else '◦  '
                     tag=('empty_subshot',) if sub_empty and self.highlight_empty_var.get() else ('sync_bad',) if status in ('KO','REVIEW') else ('subshot',)
-                    link_mark = '⇄ ' if sub.get('link_group') else ''
+                    link_mark = self._linked_suffix(scene['number'],sh['number'],sub['id'])
                     self.scene_tree.insert(tid,'end',iid=uid,
-                        text=f"{prefix}{link_mark}{sub['name']}    {vid}V / {aud}A", 
+                        text=f"{prefix}{sub['name']}{link_mark}    {vid}V / {aud}A", 
                         values=(self._sync_label(status),),tags=tag)
         if select and self.scene_tree.exists(select):
             self.scene_tree.selection_set(select);self.scene_tree.see(select)
         n_scene=sum(core.empty_scene(s) for s in self.catalog['scenes'])
         n_shot=sum(core.empty_shot(sh) for s in self.catalog['scenes'] for sh in s['shots'])
         n_sub=sum(core.empty_subshot(u) for s in self.catalog['scenes'] for sh in s['shots'] for u in sh.get('subshots',[]))
-        unsynced=sum(scene_sync.effective_status(t) != 'OK'
+        unsynced=sum(scene_sync.needs_sync_attention(t)
                      for s in self.catalog['scenes'] for sh in s['shots'] for t in self._all_takes(sh))
         self.scene_count_var.set(self.tr(f'{n_scene} scene · {n_shot} shot · {n_sub} sotto-shot senza file · ○ = vuoto')+f'  |  {unsynced} sync pending/review/KO')
         self._updating=False

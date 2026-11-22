@@ -228,6 +228,7 @@ IT_TO_EN.update({
 })
 EN_TO_IT = {value: key for key,value in IT_TO_EN.items()}
 EN_TO_IT.update({
+    'One-sided (SINGLE)': 'Solo audio/video (SINGLE)',
     'Scene / shot / sub-shot': 'Scena / shot / sotto-shot',
     '✎ Sync editor': '✎ Editor sincronizzazione',
     'Manual synchronization editor': 'Editor sincronizzazione manuale',

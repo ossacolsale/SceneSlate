@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.8.0 — Review ergonomics and filtering
+
+- Windows executable icon included in published binaries.
+- Sync Editor undo/redo and stoppable continuous playback across the whole camera recording using bounded chunks.
+- Review counter ignores intentional one-sided takes.
+- Combinable sync-status and take-presence filters, including SINGLE on mixed subtrees.
+- Collapsible descriptions/notes panel with persistent state.
+- Inline link destination summaries in the scene tree.
+- Improved high-confidence waveform consensus while retaining ambiguity checks.
+
+
 ## 3.7.0 — Multiresolution audio synchronization
 
 - Replaced single global low-rate peak matching with a multi-stage search: waveform correlation, log-amplitude envelope, high-resolution window consensus and partially whitened GCC-PHAT when NumPy is available.

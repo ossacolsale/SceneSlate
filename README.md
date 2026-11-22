@@ -1,10 +1,19 @@
-# SceneSlate 3.7.0
+# SceneSlate 3.8.0
 
 ![SceneSlate logo](sceneslate_logo.png)
 
 SceneSlate is a **cross-platform footage catalog** written in Python 3 and Tkinter. Its interface is available in **English and Italian**. A new installation starts in **English**; change the language using the **Language / Lingua** selector in the top toolbar. The preference survives restarts and upgrades, and switching languages does **not** rename files, modify a catalog or reset the scene selection.
 
 Footage is organized as **scene → shot → optional sub-shot → take**. Every take has an optional video reference and an optional audio reference, each with independent ratings (`B` good, `R` reserve, `S` reject). Takes can have descriptions and annotations; scenes, shots and sub-shots have optional descriptions. **Original media files are never renamed, moved, deleted or duplicated.** When a video/audio pair is complete, SceneSlate attempts **background waveform synchronization** if FFmpeg is installed; the alignment metadata is stored per take, never written into the media.
+
+## 3.8.0 — Faster review and navigation
+
+- **Undo / Redo** (`Ctrl+Z`, `Ctrl+Y`) in the Sync Editor for offset adjustments and continuous, stoppable listening until the end of the camera recording, using bounded preview chunks.
+- Scene/shot/sub-shot filters combine sync state (`OK`, `REVIEW`, `KO`, `WAIT`, `EMPTY`, **`One-sided (SINGLE)`**) with take presence (`All`, `With takes`, `Without takes`). `SINGLE` finds **any one-sided take in a subtree**, including groups containing synced pairs.
+- Intentionally one-sided takes (**video only or audio only**) are excluded from the counter of sync problems requiring attention.
+- Descriptions/notes can be collapsed to free space; the choice is saved across sessions.
+- Linked scene/shot/sub-shot nodes show concise destination labels inline without opening another panel.
+- The Windows Release executable embeds the SceneSlate `.ico` application icon.
 
 ## Multiresolution synchronization (3.7.0)
 

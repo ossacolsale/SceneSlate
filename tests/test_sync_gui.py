@@ -37,7 +37,7 @@ class SyncGuiTests(unittest.TestCase):
                 app.scene_filter_changed()
                 self.assertFalse(app.scene_tree.exists('s:1'))
                 self.assertTrue(app.scene_tree.exists('s:2'))
-                self.assertTrue(app.scene_tree.exists('s:3'))
+                self.assertFalse(app.scene_tree.exists('s:3'))  # Single-sided takes are complete
                 app.refresh_scene_tree('t:2:1')
                 self.assertEqual(app.media_tree.item('1','values')[-1],'✕ KO')
                 self.assertEqual(app.session_data()['only_unsynced'],True)

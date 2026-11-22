@@ -72,18 +72,34 @@ def effective_status(take):
     return sync['status']
 
 
-def node_status(takes):
-    """Aggregate: OK only if all existing pairs were confidently aligned.
+def needs_sync_attention(take):
+    """Only actual video + external-audio pairs can need synchronization.
 
-    An unpaired take is incomplete; an empty node has status EMPTY.
+    A one-sided take is intentional and should never inflate the review count.
     """
-    states=[effective_status(t) for t in takes]
-    if not states:return 'EMPTY'
-    if all(s=='OK' for s in states):return 'OK'
-    if 'KO' in states:return 'KO'
-    if 'REVIEW' in states:return 'REVIEW'
-    if 'PENDING' in states:return 'PENDING'
-    return 'SINGLE'
+    return bool(take.get('video') and take.get('audio')) and effective_status(take) in (
+        'KO', 'REVIEW', 'PENDING')
+
+
+def node_status(takes):
+    """Aggregate a subtree, treating intentional single-sided takes as complete.
+
+    A node made only of single-sided takes displays SINGLE. Mixed OK and SINGLE
+    displays OK; SINGLE/EMPTY are never review tasks.
+    """
+    states = [effective_status(t) for t in takes]
+    if not states:
+        return 'EMPTY'
+    paired = [state for state in states if state != 'SINGLE']
+    if not paired:
+        return 'SINGLE'
+    if 'KO' in paired:
+        return 'KO'
+    if 'REVIEW' in paired:
+        return 'REVIEW'
+    if 'PENDING' in paired:
+        return 'PENDING'
+    return 'OK'
 
 
 def media_probe(path, ffprobe=None):
@@ -420,13 +436,27 @@ def _fine_candidate(video, audio, offset, rate=FINE_RATE):
     spread=max(w['offset'] for w in agree)-min(w['offset'] for w in agree)
     phat=[w['phat_disagreement_s'] for w in agree if w['phat_disagreement_s'] is not None]
     phat_ok=not phat or sum(x<=.008 for x in phat)>=max(2,len(phat)//2)
-    good=len(agree)>=3 and score>=.16 and spread<=.008 and phat_ok and not outliers
+    # Two or three very clean independent windows can provide stronger evidence
+    # than four mediocre ones.  This reduces unnecessary REVIEW statuses without
+    # lowering the bar for ambiguous/repetitive signals.
+    unique_peaks=sum(1 for w in agree if w.get('peak_gap',0.) >= .045)
+    very_clean=(len(agree)>=2 and score>=.43 and spread<=.004
+                and unique_peaks>=2 and phat_ok and not outliers)
+    consistent=(len(agree)>=3 and score>=.16 and spread<=.008
+                and phat_ok and not outliers)
+    # With highly consistent time-domain matches, PHAT disagreement from
+    # microphone EQ should not force REVIEW when the peaks are unambiguous.
+    eq_resilient=(len(agree)>=3 and score>=.32 and spread<=.004
+                  and unique_peaks>=3 and not outliers)
+    good=consistent or very_clean or eq_resilient
     return {'status':'OK' if good else 'REVIEW', 'offset':weighted,
             'score':score,'valid':len(agree),'window_count':len(windows),
             'spread_ms':(values[-1]-values[0])*1000,
             'error':'' if good else 'Waveform alignment plausible; local matches need manual review',
             'precision_ms':1000/rate,
-            'phat_ok':phat_ok}
+            'phat_ok':phat_ok,
+            'consensus_windows':len(agree),
+            'strong_unique_windows':unique_peaks}
 
 
 def robust_align(video_coarse, audio_coarse, video_fine, audio_fine,
