@@ -1,12 +1,18 @@
-# SceneSlate 3.3
+# SceneSlate 3.4
 
-SceneSlate is a **cross-platform, offline footage catalog** written in Python 3 and Tkinter. Its interface is available in **English and Italian**. A new installation starts in **English**; change the language using the **Language / Lingua** selector in the top toolbar. The preference survives restarts and upgrades, and switching languages does **not** rename files, modify a catalog or reset the scene selection.
+SceneSlate is a **cross-platform footage catalog** written in Python 3 and Tkinter. Its interface is available in **English and Italian**. A new installation starts in **English**; change the language using the **Language / Lingua** selector in the top toolbar. The preference survives restarts and upgrades, and switching languages does **not** rename files, modify a catalog or reset the scene selection.
 
 Footage is organized as **scene → shot → optional sub-shot → take**. Every take has an optional video reference and an optional audio reference, each with independent ratings (`B` good, `R` reserve, `S` reject). Takes can have descriptions and annotations; scenes, shots and sub-shots have optional descriptions. **Original media files are never renamed, moved, deleted or duplicated.** When a video/audio pair is complete, SceneSlate attempts **background waveform synchronization** if FFmpeg is installed; the alignment metadata is stored per take, never written into the media.
 
-## Additional requirement: automatic waveform synchronization
+## Automatic synchronization and optional FFmpeg setup
 
-**FFmpeg and ffprobe** must be discoverable on your system `PATH` (or specify `SCENESLATE_FFMPEG` and `SCENESLATE_FFPROBE`). Download from [ffmpeg.org](https://ffmpeg.org/download.html), or on Ubuntu/Debian use `sudo apt install ffmpeg`. The standard library only is sufficient; **NumPy is optional** and speeds up correlation. The fallback FFT implementation works without NumPy. Self-contained PyInstaller builds **do not bundle FFmpeg**.
+**Windows:** If FFmpeg and ffprobe are missing when SceneSlate starts, it offers an optional **Download and install** action. Nothing is downloaded without your explicit confirmation. The install uses the Windows FFmpeg essentials ZIP from [gyan.dev](https://www.gyan.dev/ffmpeg/builds/), a Windows build provider linked by [ffmpeg.org](https://ffmpeg.org/download.html). The vendor's published SHA-256 checksum is checked before extracting **only** `ffmpeg.exe` and `ffprobe.exe` into `%APPDATA%\SceneSlate\tools\ffmpeg\` (by default). No administrator rights, PATH changes or modifications to source media are required. The downloaded ZIP is deleted after successful installation.
+
+Choose **Later** to postpone the installation; SceneSlate asks again at the next launch while the executables are missing. Tick **Do not ask again at startup** to suppress reminders. You can reopen the setup at any time through **Tools → FFmpeg setup…** (Italian: **Strumenti → Configurazione FFmpeg…**) or re-enable **Tools → Ask at startup when FFmpeg is missing**. An existing system installation on PATH is used without downloading another copy. After provisioning, SceneSlate retries any synchronization marked KO solely because FFmpeg/ffprobe were missing.
+
+**Linux:** Install with your distribution's package manager, for example `sudo apt install ffmpeg`. SceneSlate can remind you that it is missing, but does not automatically install system packages on Linux. You may also explicitly set `SCENESLATE_FFMPEG` and `SCENESLATE_FFPROBE`.
+
+The Python standard library is sufficient; **NumPy is optional** and speeds up correlation. The fallback FFT implementation works without NumPy. Standalone PyInstaller builds **do not bundle FFmpeg**. The optional Windows installer is the only automatic network operation, and only runs after approval.
 
 When both the camera video and a separate sound recording have been assigned to one take, the background worker inspects the video for an audio stream. If one exists, it analyzes up to the first **90 seconds** of each recording, searching offsets of up to **±60 seconds**. An overlap of at least **8 seconds** is required. This supports ordinary double-system recording where a camera recorded scratch audio as well; it is not timecode synchronization and cannot detect time drift reliably.
 
@@ -32,7 +38,7 @@ A **SYNC** column next to each take and a separate SYNC column in the scene tree
 | Windows | Double-click `SceneSlate.vbs` or `scene_slate.pyw` | Python 3.10+ with Tkinter and `.pyw` file association |
 | Linux | Open `SceneSlate.desktop` from a file manager, or run `./launch_linux.sh` | Python 3.10+ with Tkinter (`python3-tk` on Ubuntu/Debian) |
 
-The optional `SceneSlate.pyz` contains the Python sources as a single portable Python zip application (`python SceneSlate.pyz`, with Python 3 installed); FFmpeg/ffprobe must still be installed separately to synchronize audio.
+The optional `SceneSlate.pyz` contains the Python sources as a single portable Python zip application (`python SceneSlate.pyz`, with Python 3 installed); on Windows FFmpeg/ffprobe can be installed using the new in-app wizard.
 
 The Windows `.vbs` entry point uses `pythonw.exe` (via `.pyw` file association) so it does not leave a Command Prompt window open. For troubleshooting use `launch_windows.bat`. The Linux desktop shortcut uses `Terminal=false`; depending on your file manager, it may require marking it executable or trusted. To launch in a terminal, run `python3 scene_slate.py`.
 
@@ -50,7 +56,7 @@ Normal pushes and pull requests do not run GitHub Actions. To build distributabl
 
 No `actions/upload-artifact` step or Actions cache is used. GitHub Releases are the intended home for downloadable builds, while GitHub Actions logs remain available according to GitHub's retention policy. This setup is designed for **public repositories using standard GitHub-hosted runners**; verify your own GitHub billing settings before changing repository visibility or runner type.
 
-**Release prerequisites:** `gh release upload` uses the ephemeral `GITHUB_TOKEN` with `contents: write`. Building does not bundle FFmpeg/ffprobe; install them separately on target computers if automatic waveform synchronization is needed. Because this workflow triggers on publishing a Release, publish only after the tagged code is ready to distribute.
+**Release prerequisites:** `gh release upload` uses the ephemeral `GITHUB_TOKEN` with `contents: write`. Building does not bundle FFmpeg/ffprobe; on Windows the in-app wizard can install them into the user profile after approval. Because this workflow triggers on publishing a Release, publish only after the tagged code is ready to distribute.
 
 ## Typical workflow
 
@@ -124,11 +130,11 @@ The internationalization strings are in `scene_i18n.py`; new UI labels and messa
 
 ## Limitations
 
-SceneSlate does **not** edit, sync or preview media. Creation timestamps on Linux may fall back to modification timestamps when the filesystem does not expose birth time. Audio/video pairing requires a user's deliberate choice. There is currently **no license file**; public availability of source code does not itself grant broad redistribution or reuse rights.
+SceneSlate does **not** modify or render original media, and does not provide in-app video preview. Synchronization is non-destructive: it computes an offset stored in the catalog. Creation timestamps on Linux may fall back to modification timestamps when the filesystem does not expose birth time. Audio/video pairing requires a user's deliberate choice. There is currently **no license file**; public availability of source code does not itself grant broad redistribution or reuse rights.
 
-## Upgrade notes for 3.3
+## Upgrade notes for 3.4
 
-Catalog version is now **5**. Older catalog files (v1–v4) migrate automatically, preserving all existing associations. On the first save of a v4 catalog, SceneSlate preserves a `.v4.bak` original. The sync record is attached to the take; copied references retain valid alignments but are invalidated when the underlying media changes. Session configuration stays outside the software folder under the same per-user directory.
+Catalog version remains **5**. Older catalog files (v1–v4) migrate automatically, preserving all existing associations. On the first save of a v4 catalog, SceneSlate preserves a `.v4.bak` original. The sync record is attached to the take; copied references retain valid alignments but are invalidated when the underlying media changes. Session configuration stays outside the software folder under the same per-user directory.
 
 ### Data interoperability and limitations
 
