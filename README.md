@@ -36,7 +36,21 @@ The optional `SceneSlate.pyz` contains the Python sources as a single portable P
 
 The Windows `.vbs` entry point uses `pythonw.exe` (via `.pyw` file association) so it does not leave a Command Prompt window open. For troubleshooting use `launch_windows.bat`. The Linux desktop shortcut uses `Terminal=false`; depending on your file manager, it may require marking it executable or trusted. To launch in a terminal, run `python3 scene_slate.py`.
 
-This source package is *not* a precompiled Windows executable. To build an independent executable on the target OS, use `build_windows.bat` or `build_linux.sh` after installing PyInstaller. The GitHub Actions workflow tests and builds for Windows and Linux, with downloadable workflow artifacts.
+This source package is *not* a precompiled Windows executable. To build an independent executable on the target OS, use `build_windows.bat` or `build_linux.sh` after installing PyInstaller. The GitHub Actions workflow is **release-only**: it tests/builds for Windows and Linux only when a GitHub Release is published, then attaches the binaries directly to that Release. It does **not** store Actions workflow artifacts.
+
+## Publishing releases
+
+Normal pushes and pull requests do not run GitHub Actions. To build distributable binaries:
+
+1. Make sure the intended version is committed on `main`.
+2. Create a new version tag (for example `v3.4.0`) pointing to that commit.
+3. In **GitHub → Releases → Draft a new release**, choose the tag and **Publish release**.
+4. The `Publish SceneSlate release` workflow will run tests and PyInstaller on the standard Windows and Ubuntu hosted runners.
+5. If successful, the release receives `SceneSlate-<tag>-windows-x64.zip` and `SceneSlate-<tag>-linux-x64.tar.gz` directly as Release assets.
+
+No `actions/upload-artifact` step or Actions cache is used. GitHub Releases are the intended home for downloadable builds, while GitHub Actions logs remain available according to GitHub's retention policy. This setup is designed for **public repositories using standard GitHub-hosted runners**; verify your own GitHub billing settings before changing repository visibility or runner type.
+
+**Release prerequisites:** `gh release upload` uses the ephemeral `GITHUB_TOKEN` with `contents: write`. Building does not bundle FFmpeg/ffprobe; install them separately on target computers if automatic waveform synchronization is needed. Because this workflow triggers on publishing a Release, publish only after the tagged code is ready to distribute.
 
 ## Typical workflow
 
