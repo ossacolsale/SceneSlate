@@ -22,9 +22,9 @@ SYNC_STATUSES = {'OK','REVIEW','KO','PENDING'}
 
 
 def executables():
-    """Use explicit overrides, then a system pair, then managed user-local FFmpeg.
+    """Use explicit overrides, then an installed system pair, then local FFmpeg.
 
-    Managed executables work without changing the PATH environment variable.
+    Managed tools live in the per-user profile and work without modifying PATH.
     """
     import scene_dependencies
     local = scene_dependencies.managed_executables()
@@ -110,10 +110,11 @@ def media_probe(path, ffprobe=None):
         'sample_rate':int(a.get('sample_rate') or 0) if a else 0}
 
 
-def extract_audio(path, ffmpeg, seconds=MAX_SECONDS):
+def extract_audio(path, ffmpeg, seconds=MAX_SECONDS, *, rate=SAMPLE_RATE,
+                  highpass=60, lowpass=320):
     args=[ffmpeg,'-hide_banner','-loglevel','error','-nostdin','-i',str(path),
-          '-t',str(seconds),'-map','0:a:0','-vn','-af','highpass=f=60,lowpass=f=320',
-          '-ac','1','-ar',str(SAMPLE_RATE),'-f','f32le','pipe:1']
+          '-t',str(seconds),'-map','0:a:0','-vn','-af',f'highpass=f={highpass},lowpass=f={lowpass}',
+          '-ac','1','-ar',str(rate),'-f','f32le','pipe:1']
     p=subprocess.run(args,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=130)
     if p.returncode:raise RuntimeError((p.stderr.decode('utf-8',errors='replace') or 'ffmpeg failed').strip()[-350:])
     data=array.array('f');data.frombytes(p.stdout[:len(p.stdout)//4*4])
@@ -167,42 +168,300 @@ def _correlation(video,audio):
         return [x.real for x in fa],v,a
 
 
-def estimate_offset(video,audio,max_offset_seconds=MAX_OFFSET_SECONDS):
-    """Return offset in seconds, normalized peak correlation, and safe status."""
-    v,a=list(video),list(audio)
-    if min(len(v),len(a))<SAMPLE_RATE*MIN_OVERLAP_SECONDS:
+def _scored_lags(video, audio, rate, max_offset_seconds, overlap_seconds):
+    """Peak-safe normalized cross-correlation for lags a(t+lag) vs v(t).
+
+    A normalized dot product alone can strongly prefer short quiet overlaps;
+    require both usable signal energy and a minimum effective overlap.
+    """
+    nv, na = len(video), len(audio)
+    if min(nv, na) < overlap_seconds * rate:
+        return []
+    corr, v, a = _correlation(video, audio)
+    n = len(corr)
+    vp = [0.0]
+    ap = [0.0]
+    for value in v:
+        vp.append(vp[-1] + value * value)
+    for value in a:
+        ap.append(ap[-1] + value * value)
+    if min(vp[-1]/nv, ap[-1]/na) < 1.e-10:
+        return []
+    minimum = int(overlap_seconds * rate)
+    limit = min(int(max_offset_seconds * rate), max(nv, na) - minimum)
+    scores = []
+    for lag in range(-limit, limit + 1):
+        vi = max(0, -lag)
+        ai = max(0, lag)
+        length = min(nv - vi, na - ai)
+        if length < minimum:
+            continue
+        e_v = vp[vi + length] - vp[vi]
+        e_a = ap[ai + length] - ap[ai]
+        if min(e_v, e_a) < 1.e-9:
+            continue
+        value = float(corr[lag if lag >= 0 else n + lag])/math.sqrt(e_v*e_a)
+        # Inverted microphone polarity is a valid match.
+        scores.append((abs(value), lag / rate))
+    return scores
+
+
+def _envelope(samples, hop=8, span=24):
+    """Smoothed and compressed amplitude envelope (~100 Hz at 800 Hz).
+
+    Log compression makes source/recorder gain differences less important.
+    """
+    values = [abs(float(v)) for v in samples]
+    if not values:
+        return []
+    prefix = [0.0]
+    for value in values:
+        prefix.append(prefix[-1]+value)
+    output = []
+    half = span//2
+    for center in range(0, len(values), hop):
+        low = max(0, center-half)
+        high = min(len(values), center+half)
+        amplitude = (prefix[high]-prefix[low])/(high-low)
+        output.append(math.log1p(30*amplitude))
+    return output
+
+
+def _peak_candidates(scores, count=5, separation=0.22):
+    """Pick well-separated potential lags, not neighbouring FFT bins."""
+    candidates = []
+    for score, offset in sorted(scores, reverse=True):
+        if score < 0.06:
+            break
+        if all(abs(offset - existing[1]) > separation for existing in candidates):
+            candidates.append((float(score), float(offset)))
+            if len(candidates) >= count:
+                break
+    return candidates
+
+
+def coarse_candidates(video, audio, max_offset_seconds=MAX_OFFSET_SECONDS):
+    """Two independent coarse cues: signed waveform and signal envelope."""
+    if min(len(video), len(audio)) < SAMPLE_RATE*MIN_OVERLAP_SECONDS:
+        return []
+    waveform = _peak_candidates(_scored_lags(video, audio, SAMPLE_RATE,
+                            max_offset_seconds, MIN_OVERLAP_SECONDS), count=5)
+    env_v = _envelope(video)
+    env_a = _envelope(audio)
+    envelope = _peak_candidates(_scored_lags(env_v, env_a, SAMPLE_RATE//8,
+                            max_offset_seconds, MIN_OVERLAP_SECONDS), count=4)
+    candidates = []
+    for source, items in (('waveform', waveform), ('envelope', envelope)):
+        for score, offset in items:
+            for existing in candidates:
+                if abs(offset-existing['offset']) < .12:
+                    existing[source] = max(score, existing.get(source, 0.0))
+                    if source == 'waveform':
+                        existing['offset'] = offset
+                    break
+            else:
+                candidates.append({'offset':offset,source:score})
+    # Prefer candidates corroborated by both cues; still test good single-cue
+    # matches since the camera and separate mic may have different spectra.
+    candidates.sort(key=lambda entry: max(entry.get('waveform',0),
+             entry.get('envelope',0))*0.8 + min(entry.get('waveform',0),
+             entry.get('envelope',0))*0.2, reverse=True)
+    return candidates[:5]
+
+
+def estimate_offset(video, audio, max_offset_seconds=MAX_OFFSET_SECONDS):
+    """Backward-compatible coarse estimate, without asserting subframe precision.
+
+    For actual media, synchronize() additionally verifies short independent
+    high-rate windows and returns a sub-millisecond-resolution offset.
+    """
+    if min(len(video),len(audio)) < SAMPLE_RATE*MIN_OVERLAP_SECONDS:
         return None,0.,'KO','Audio too short for a reliable match'
-    corr,v,a=_correlation(v,a)
-    nv,na=len(v),len(a);n=len(corr)
-    # Energy of valid overlapping segments for each possible lag.
-    vp=[0.];ap=[0.]
-    for x in v:vp.append(vp[-1]+x*x)
-    for x in a:ap.append(ap[-1]+x*x)
-    total_rms_v=math.sqrt(vp[-1]/nv)
-    total_rms_a=math.sqrt(ap[-1]/na)
-    if min(total_rms_v,total_rms_a)<0.00001:
+    if max(max(abs(float(x)) for x in video),max(abs(float(x)) for x in audio)) < 1.e-5:
         return None,0.,'KO','Audio is silent or too quiet'
-    limit=min(max_offset_seconds*SAMPLE_RATE,max(nv,na)-SAMPLE_RATE*MIN_OVERLAP_SECONDS)
-    best=(-1,None)
-    scores=[]
-    # Correlation positive lag means external recording begins earlier than video.
-    for lag in range(-limit,limit+1):
-        vi=max(0,-lag);ai=max(0,lag)
-        length=min(nv-vi,na-ai)
-        if length<MIN_OVERLAP_SECONDS*SAMPLE_RATE:continue
-        e1=vp[vi+length]-vp[vi];e2=ap[ai+length]-ap[ai]
-        if e1<=1e-10 or e2<=1e-10:continue
-        score=float(corr[lag if lag>=0 else n+lag])/math.sqrt(e1*e2)
-        if score>best[0]:best=(score,lag)
-        if score>=0:scores.append((score,lag))
-    score,lag=best
-    if lag is None:return None,0.,'KO','No usable audio overlap'
-    # Check a distinct competing lag (>=0.5s separation), not adjacent sample peaks.
-    competition=max((s for s,l in scores if abs(l-lag)>SAMPLE_RATE//2),default=0.)
-    if score>=0.30 and score-competition>=0.025:status='OK';err=''
-    elif score>=0.15:status='REVIEW';err='Ambiguous or weak waveform match; verify by listening'
-    else:status='KO';err='No reliable waveform match'
-    return round(lag/SAMPLE_RATE,5) if status!='KO' else None,round(score,5),status,err
+    candidates = coarse_candidates(video,audio,max_offset_seconds)
+    if not candidates:
+        return None,0.,'KO','No usable audio overlap'
+    best = candidates[0]
+    score = max(best.get('waveform',0.),best.get('envelope',0.))
+    competing = max((max(c.get('waveform',0.), c.get('envelope',0.))
+                     for c in candidates[1:]), default=0.)
+    # A coarse OK is not used as a final OK for actual files.
+    if score >= .30 and score - competing >= .035:
+        return round(best['offset'],5),round(score,5),'OK',''
+    if score >= .19:
+        return round(best['offset'],5),round(score,5),'REVIEW','Ambiguous or weak coarse match'
+    return None,round(score,5),'KO','No reliable waveform match'
+
+
+FINE_RATE = 8000
+FINE_WINDOW_SECONDS = 2.4
+FINE_SEARCH_SECONDS = 0.22
+
+
+def _fine_window(video, audio, offset, v_start, seconds=FINE_WINDOW_SECONDS,
+                 search=FINE_SEARCH_SECONDS, rate=FINE_RATE):
+    """Estimate local lag from a full-overlap window, at 125-us granularity.
+
+    Normalized FFT correlation is corroborated by spectral whitening
+    (GCC-PHAT style) when NumPy is available. In the stdlib fallback, the
+    standard FFT is used and a conservative confidence threshold applies.
+    """
+    n_samples = int(rate*seconds)
+    v_index = int(round(v_start*rate))
+    expected_a = v_index+int(round(offset*rate))
+    margin = int(round(search*rate))
+    a_start = expected_a-margin
+    if v_index < 0 or a_start < 0 or v_index+n_samples > len(video) or a_start+n_samples+2*margin > len(audio):
+        return None
+    v = video[v_index:v_index+n_samples]
+    a = audio[a_start:a_start+n_samples+2*margin]
+    raw, v_adjusted, a_adjusted = _correlation(v,a)
+    n = len(raw)
+    # a window contains the entire video chunk throughout this search band.
+    e_v = sum(float(q)*float(q) for q in v_adjusted)
+    prefix = [0.0]
+    for q in a_adjusted:
+        prefix.append(prefix[-1]+float(q)*float(q))
+    best = (-1.0,0,0.0)
+    values = []
+    for lag in range(2*margin+1):
+        e_a = prefix[lag+n_samples]-prefix[lag]
+        normalized = float(raw[lag])/math.sqrt(max(e_v*e_a,1.e-20))
+        strength = abs(normalized)
+        values.append(strength)
+        if strength > best[0]:
+            best = (strength,lag,normalized)
+    score, lag, polarity = best
+    if not math.isfinite(score) or score < 0.055:
+        return None
+    # Peak interpolation is stable only when its three samples form a true
+    # concave peak and the magnitude of the refinement is at most 1 sample.
+    delta=0.0
+    if 0 < lag < len(values)-1:
+        left,mid,right=values[lag-1:lag+2]
+        denom=left-2*mid+right
+        if denom < -1.e-10:
+            delta=max(-0.5,min(0.5,.5*(left-right)/denom))
+    independent=max((s for i,s in enumerate(values) if abs(i-lag)>rate//125),default=0.)
+    phat_agreement=None
+    try:
+        import numpy as np
+        vf=np.asarray(v_adjusted, dtype=np.float64)
+        af=np.asarray(a_adjusted, dtype=np.float64)
+        va=np.fft.rfft(vf,n)
+        aa=np.fft.rfft(af,n)
+        cross=aa*np.conj(va)
+        # Partial spectral whitening: less sensitive to broadband noise than
+        # pure PHAT and less sensitive to microphone EQ than raw correlation.
+        weighted=cross/np.maximum(np.abs(cross),1.e-14)**0.70
+        phat=np.abs(np.fft.irfft(weighted,n)[:2*margin+1])
+        phat_lag=int(np.argmax(phat))
+        phat_agreement=abs(phat_lag-lag)/rate
+        if phat_agreement <= .008 and 0 < phat_lag < len(phat)-1:
+            # Blend tiny adjustments only when both independent cues agree.
+            lag=lag*.8+phat_lag*.2
+    except ImportError:
+        pass
+    aligned_offset=(a_start+lag+delta-v_index)/rate
+    return {'offset':aligned_offset,'score':min(1.,score),
+            'peak_gap':score-independent,'phat_disagreement_s':phat_agreement,
+            'start':v_start,'polarity':-1 if polarity < 0 else 1}
+
+
+def _fine_candidate(video, audio, offset, rate=FINE_RATE):
+    total_v=len(video)/rate
+    total_a=len(audio)/rate
+    margin=FINE_SEARCH_SECONDS
+    overlap_start=max(0.,-offset)+margin
+    overlap_end=min(total_v,total_a-offset)-margin
+    remaining=overlap_end-overlap_start-FINE_WINDOW_SECONDS
+    if remaining < .01:
+        return None
+    # Search an energy-rich position within each chronological quarter. Plain
+    # uniformly-spaced windows tend to land in long dialogue pauses and produce
+    # unnecessary REVIEW results, even when the rest of the take is clear.
+    starts=[]
+    for quarter in range(4):
+        choices=[overlap_start+remaining*(quarter+(step+.5)/4)/4
+                 for step in range(4)]
+        def energy(at):
+            start_v=int(at*rate)
+            start_a=int((at+offset)*rate)
+            step=max(1,rate//200)
+            sv=video[start_v:start_v+int(FINE_WINDOW_SECONDS*rate):step]
+            sa=audio[start_a:start_a+int(FINE_WINDOW_SECONDS*rate):step]
+            if not sv or not sa:
+                return 0.
+            ev=sum(float(x)*float(x) for x in sv)/len(sv)
+            ea=sum(float(x)*float(x) for x in sa)/len(sa)
+            return math.sqrt(max(0.,ev)*max(0.,ea))
+        starts.append(max(choices,key=energy))
+    windows=[_fine_window(video,audio,offset,start,rate=rate) for start in starts]
+    windows=[w for w in windows if w is not None and w['score']>=.085]
+    if len(windows) < 2:
+        return None
+    values=sorted(w['offset'] for w in windows)
+    mid=(values[(len(values)-1)//2]+values[len(values)//2])/2
+    agree=[w for w in windows if abs(w['offset']-mid)<=.012]
+    outliers=[w for w in windows if abs(w['offset']-mid)>.012 and w['score']>=.16]
+    if len(agree)<2:
+        return {'status':'REVIEW','offset':mid,
+                'score':sum(w['score'] for w in windows)/len(windows),
+                'valid':len(agree),'window_count':len(windows),
+                'spread_ms':(values[-1]-values[0])*1000,
+                'error':'Independent windows disagree: possible repeated dialogue or clock drift'}
+    # Consensus weighted by normalized correlation: do not let a single very
+    # strong clapper dominate inconsistent speech later in the recording.
+    points=sorted(agree,key=lambda w:w['offset'])
+    weighted=sum(w['offset']*w['score'] for w in points)/sum(w['score'] for w in points)
+    scores=sorted(w['score'] for w in agree)
+    score=scores[len(scores)//2]
+    spread=max(w['offset'] for w in agree)-min(w['offset'] for w in agree)
+    phat=[w['phat_disagreement_s'] for w in agree if w['phat_disagreement_s'] is not None]
+    phat_ok=not phat or sum(x<=.008 for x in phat)>=max(2,len(phat)//2)
+    good=len(agree)>=3 and score>=.16 and spread<=.008 and phat_ok and not outliers
+    return {'status':'OK' if good else 'REVIEW', 'offset':weighted,
+            'score':score,'valid':len(agree),'window_count':len(windows),
+            'spread_ms':(values[-1]-values[0])*1000,
+            'error':'' if good else 'Waveform alignment plausible; local matches need manual review',
+            'precision_ms':1000/rate,
+            'phat_ok':phat_ok}
+
+
+def robust_align(video_coarse, audio_coarse, video_fine, audio_fine,
+                 max_offset_seconds=MAX_OFFSET_SECONDS, candidates=None):
+    """Multiresolution consensus alignment; return a diagnostic record dict.
+
+    The result is *not* a statistical probability. A candidate is called OK
+    only when independent windows agree and no similar rival survives.
+    """
+    if candidates is None:
+        candidates=coarse_candidates(video_coarse,audio_coarse,max_offset_seconds)
+    if not candidates:
+        return {'status':'KO','offset':None,'score':0.,'error':'No usable coarse match'}
+    results=[]
+    for candidate in candidates:
+        fine=_fine_candidate(video_fine,audio_fine,candidate['offset'])
+        if fine is not None:
+            fine['coarse_offset']=candidate['offset']
+            fine['coarse_score']=max(candidate.get('waveform',0.),candidate.get('envelope',0.))
+            # Reject coincidences that were never supported by the long signal.
+            fine['ranking']=fine['score']*0.75+fine['coarse_score']*0.25+min(fine['valid'],4)*.005
+            results.append(fine)
+    if not results:
+        return {'status':'KO','offset':None,'score':0.,'error':'No coherent multiresolution match'}
+    results.sort(key=lambda result:result['ranking'],reverse=True)
+    best=results[0]
+    # Matches at different lags must be clearly weaker. Otherwise repeated
+    # dialogue/music makes confident automatic synchronization inappropriate.
+    competing=next((item for item in results[1:] if abs(item['offset']-best['offset'])>.035),None)
+    if competing and best['ranking']-competing['ranking']<.07:
+        best['status']='REVIEW'
+        best['error']='Several plausible offsets; manual review recommended'
+    best['offset']=round(best['offset'],6)
+    best['score']=round(best['score'],5)
+    return best
 
 
 def synchronize(video_path,audio_path):
@@ -218,7 +477,27 @@ def synchronize(video_path,audio_path):
         if not pa['audio']:raise RuntimeError('Selected audio has no usable audio stream')
         v=extract_audio(video_path,ffmpeg)
         a=extract_audio(audio_path,ffmpeg)
-        offset,score,status,error=estimate_offset(v,a)
-        return sync_record(status,offset_seconds=offset,score=score,error=error,signature=signature)
+        candidates=coarse_candidates(v,a)
+        if not candidates:
+            return sync_record('KO',error='No usable coarse match',score=0.,signature=signature,
+                               method='multistage_waveform_v2')
+        vf=extract_audio(video_path,ffmpeg,seconds=MAX_SECONDS,rate=FINE_RATE,
+                         highpass=110,lowpass=3400)
+        af=extract_audio(audio_path,ffmpeg,seconds=MAX_SECONDS,rate=FINE_RATE,
+                         highpass=110,lowpass=3400)
+        refined=robust_align(v,a,vf,af,candidates=candidates)
+        status=refined['status']
+        record=sync_record(status,offset_seconds=refined.get('offset'),
+                           score=refined.get('score'),error=refined.get('error',''),
+                           signature=signature, method='multistage_waveform_v2')
+        record['offset_resolution_ms']=refined.get('precision_ms')
+        record['window_spread_ms']=refined.get('spread_ms')
+        record['windows_verified']=refined.get('valid',0)
+        record['coarse_offset_seconds']=refined.get('coarse_offset')
+        record['coarse_score']=refined.get('coarse_score')
+        record['candidate_count']=len(candidates)
+        record['note']='Resolution is not accuracy. Validate important takes by ear; XML export rounds to timeline frames.'
+        return record
     except (OSError,ValueError,RuntimeError,subprocess.TimeoutExpired) as exc:
-        return sync_record('KO',error=str(exc),signature=signature)
+        return sync_record('KO',error=str(exc),signature=signature,
+                           method='multistage_waveform_v2')

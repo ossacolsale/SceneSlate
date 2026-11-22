@@ -382,6 +382,9 @@ class SceneSlateApp:
         self.only_empty_var=tk.BooleanVar(value=False)
         self.highlight_empty_var=tk.BooleanVar(value=True)
         self._updating=False
+        self.logo_image=None
+        self.logo_header_image=None
+        self.load_branding()
         self.make_styles()
         self.make_ui()
         self.localize_ui()
@@ -395,6 +398,30 @@ class SceneSlateApp:
         self.root.bind('<Configure>',lambda e:self.queue_save_session() if e.widget is self.root else None)
         self._ready=True
         self._sync_timer=self.root.after(400,self.poll_sync)
+
+    def load_branding(self):
+        logo_path = Path(__file__).with_name('sceneslate_icon.png')
+        ico_path = Path(__file__).with_name('sceneslate_logo.ico')
+        if ico_path.is_file():
+            try:
+                self.root.iconbitmap(default=str(ico_path))
+            except tk.TclError:
+                pass
+        if not logo_path.is_file():
+            return
+        try:
+            self.logo_image = tk.PhotoImage(file=str(logo_path))
+            try:
+                self.root.iconphoto(True, self.logo_image)
+            except tk.TclError:
+                pass
+            try:
+                self.logo_header_image = self.logo_image.subsample(4, 4)
+            except tk.TclError:
+                self.logo_header_image = self.logo_image
+        except tk.TclError:
+            self.logo_image = None
+            self.logo_header_image = None
 
     def make_styles(self):
         self.root.configure(bg='#121a28')
@@ -431,7 +458,10 @@ class SceneSlateApp:
     def make_ui(self):
         header=ttk.Frame(self.root,style='Root.TFrame',padding=(18,12))
         header.pack(fill='x')
-        title_frame=ttk.Frame(header,style='Root.TFrame');title_frame.pack(side='left')
+        brand_frame=ttk.Frame(header,style='Root.TFrame');brand_frame.pack(side='left')
+        if self.logo_header_image is not None:
+            ttk.Label(brand_frame,image=self.logo_header_image,style='Root.TFrame').pack(side='left',padx=(0,10))
+        title_frame=ttk.Frame(brand_frame,style='Root.TFrame');title_frame.pack(side='left')
         ttk.Label(title_frame,text='SceneSlate',style='Title.TLabel').pack(anchor='w')
         ttk.Label(title_frame,text='Catalogazione riprese  •  Associazioni video/audio  •  Export Resolve',style='Sub.TLabel').pack(anchor='w')
         actions=ttk.Frame(header,style='Root.TFrame');actions.pack(side='right')
@@ -460,7 +490,7 @@ class SceneSlateApp:
         ttk.Label(head,text='SCENE / SHOT / INQUADRATURE',style='Section.TLabel').pack(side='left')
         ttk.Button(head,text='Convenzione…',command=self.settings).pack(side='right')
         controls=ttk.Frame(left,style='Panel.TFrame');controls.pack(fill='x',pady=(10,8))
-        for text,action,sty in [('+ Scena',self.add_scene,'Primary.TButton'),('+ Shot',self.add_shot,'Primary.TButton'),('+ Sotto-shot',self.add_subshot,'Primary.TButton'),('− Elimina',self.delete_selected,'Danger.TButton'),('Rinumera…',self.renumber,'TButton')]:
+        for text,action,sty in [('+ Scena',self.add_scene,'Primary.TButton'),('+ Shot',self.add_shot,'Primary.TButton'),('+ Sotto-shot',self.add_subshot,'Primary.TButton'),('⇄ Collegamenti…',self.manage_links,'TButton'),('− Elimina',self.delete_selected,'Danger.TButton'),('Rinumera…',self.renumber,'TButton')]:
             ttk.Button(controls,text=text,command=action,style=sty).pack(side='left',padx=(0,5))
         scene_wrap=ttk.Frame(left,style='Panel.TFrame');scene_wrap.pack(fill='both',expand=True)
         self.scene_tree=ttk.Treeview(scene_wrap,columns=('sync',),show='tree headings',selectmode='browse',height=5)
@@ -487,6 +517,7 @@ class SceneSlateApp:
         self.scene_context.add_command(label='Copia contenuto  (Ctrl+C)',command=self.copy_selected)
         self.scene_context.add_command(label='Incolla qui  (Ctrl+V)',command=self.paste_selected)
         self.scene_context.add_separator()
+        self.scene_context.add_command(label='Gestisci collegamenti…',command=self.manage_links)
         self.scene_context.add_command(label='Rinomina / Rinumera…',command=self.renumber)
         self.scene_context.add_command(label='Elimina…',command=self.delete_selected)
         copy_row=ttk.Frame(left,style='Panel.TFrame');copy_row.pack(fill='x',pady=(6,0))
@@ -630,19 +661,18 @@ class SceneSlateApp:
         self.localize_ui()
         self.queue_save_session()
 
-
     def set_ffmpeg_reminders(self):
         self._ffmpeg_prompt_suppressed = not self._ffmpeg_ask_var.get()
         self.queue_save_session()
 
     def maybe_prompt_ffmpeg(self):
-        """Ask on each launch if both tools are not found, unless suppressed."""
+        """Ask once per launch, unless suppressed or both tools are available."""
         if self._ffmpeg_prompt_suppressed or self._ffmpeg_installing:return
         if not all(scene_sync.executables()):
             self.ffmpeg_setup(manual=False)
 
     def ffmpeg_setup(self, manual=False):
-        """The consent dialog has no network side effects; install only on click."""
+        """Show an explicit consent dialog; no download occurs by opening it."""
         if self._ffmpeg_installing:return
         binaries=scene_sync.executables()
         if all(binaries):
@@ -688,7 +718,7 @@ class SceneSlateApp:
         dialog.grab_set()
 
     def install_ffmpeg_windows(self):
-        """Background installation: Tk is touched only in the polling callback."""
+        """Background installation: Tk is touched only from the polling callback."""
         if sys.platform != 'win32' or self._ffmpeg_installing:return
         self._ffmpeg_installing=True
         events=Queue()
@@ -752,7 +782,7 @@ class SceneSlateApp:
         self.root.after(150,poll)
 
     def recover_missing_ffmpeg_sync(self):
-        """Reprocess only KO takes caused solely by missing tools."""
+        """Reprocess only legacy KO entries caused solely by missing tools."""
         if not all(scene_sync.executables()):return 0
         count=0
         for _scene,_shot,_sub,container in core.iter_containers(self.catalog):
@@ -910,6 +940,93 @@ class SceneSlateApp:
         n,h=self.selected_ids()
         return (n,h,self.selected_subshot_id()) if n is not None else None
 
+    def _target_text(self, n, h=None, u=None):
+        if n is None:
+            return ''
+        if u:
+            sub = core.subshot_for(self.catalog, n, h, u)
+            return core.label(self.catalog, n, h, sub['name'] if sub else None)
+        return core.label(self.catalog, n, h)
+
+    def _propagate_related_links(self, n=None, h=None, u=None):
+        if n is None:
+            return 0
+        count = 0
+        scene = core.scene_for(self.catalog, n)
+        shot = core.shot_for(self.catalog, n, h) if h is not None else None
+        sub = core.subshot_for(self.catalog, n, h, u) if u else None
+        if scene and scene.get('link_group'):
+            count += core.propagate_links(self.catalog, n)
+        if shot and shot.get('link_group'):
+            count += core.propagate_links(self.catalog, n, h)
+        if sub and sub.get('link_group'):
+            count += core.propagate_links(self.catalog, n, h, u)
+        return count
+
+    def manage_links(self):
+        target = self.tree_target()
+        if target is None:
+            self.notice('Select a scene, shot or sub-shot first.'); return
+        n, h, u = target
+        kind = 'scene' if h is None else 'subshot' if u else 'shot'
+        current_label = self._target_text(n, h, u)
+        current_ref = core.node_ref(n, h, u)
+        linked = set(core.linked_refs(self.catalog, n, h, u))
+        win = tk.Toplevel(self.root)
+        win.title(self.tr('Link selector'))
+        win.configure(bg=self.panel)
+        win.transient(self.root); win.grab_set()
+        outer = ttk.Frame(win, style='Panel.TFrame', padding=18)
+        outer.pack(fill='both', expand=True)
+        ttk.Label(outer, text=self.tr('Select linked items'), style='Section.TLabel').pack(anchor='w')
+        ttk.Label(outer, text=self.tr('Changes to takes and descriptions will be mirrored across all linked items of the same kind.'), style='Muted.TLabel', wraplength=520, justify='left').pack(anchor='w', fill='x', pady=(4, 10))
+        ttk.Label(outer, text=self.tr('Current item:') + ' ' + current_label, style='Panel.TLabel').pack(anchor='w', pady=(0, 8))
+        listbox = ttk.Frame(outer, style='Panel.TFrame')
+        listbox.pack(fill='both', expand=True)
+        canvas = tk.Canvas(listbox, bg=self.deep, highlightthickness=0, height=280)
+        scroll = ttk.Scrollbar(listbox, orient='vertical', command=canvas.yview)
+        body = ttk.Frame(canvas, style='Panel.TFrame')
+        body.bind('<Configure>', lambda e: canvas.configure(scrollregion=canvas.bbox('all')) )
+        canvas.create_window((0,0), window=body, anchor='nw')
+        canvas.configure(yscrollcommand=scroll.set)
+        canvas.pack(side='left', fill='both', expand=True)
+        scroll.pack(side='right', fill='y')
+        checks = {}
+        for ref, node_kind, _node in core.iter_nodes(self.catalog, kind):
+            if ref == current_ref:
+                continue
+            parts = ref.split(':')
+            if kind == 'scene':
+                label = self._target_text(int(parts[1]))
+            elif kind == 'shot':
+                label = self._target_text(int(parts[1]), int(parts[2]))
+            else:
+                label = self._target_text(int(parts[1]), int(parts[2]), parts[3])
+            var = tk.BooleanVar(value=ref in linked)
+            checks[ref] = var
+            ttk.Checkbutton(body, text=label, variable=var).pack(anchor='w', fill='x', padx=8, pady=3)
+        def apply_links():
+            chosen = [ref for ref, var in checks.items() if var.get()]
+            self.commit_notes()
+            self.snapshot()
+            try:
+                gid = core.configure_links(self.catalog, n, h, u, chosen)
+                self.refresh_scene_tree(self.last_tree_selection)
+                self.changed()
+                if gid:
+                    self.notice('Links updated.')
+                else:
+                    self.notice('Links removed.')
+                win.destroy()
+            except core.CatalogError as exc:
+                if self.undo_stack: self.undo_stack.pop()
+                messagebox.showerror(self.tr('Cannot update links'), str(exc), parent=win)
+        footer = ttk.Frame(outer, style='Panel.TFrame')
+        footer.pack(fill='x', pady=(10, 0))
+        ttk.Button(footer, text=self.tr('Cancel'), command=win.destroy).pack(side='right', padx=(5,0))
+        ttk.Button(footer, text=self.tr('Apply'), command=apply_links, style='Primary.TButton').pack(side='right')
+        center_window(win, self.root, 620, 470)
+
     def copy_selected(self):
         target=self.tree_target()
         if target is None:self.notice('Seleziona scena, shot o sotto-shot da copiare.');return
@@ -925,6 +1042,7 @@ class SceneSlateApp:
         self.snapshot()
         try:
             result=core.paste_snapshot(self.catalog,self.copied_node,*target)
+            self._propagate_related_links(*target)
             self.last_take_number=None
             self.refresh_scene_tree()
             self.changed()
@@ -997,8 +1115,9 @@ class SceneSlateApp:
             empty=core.empty_scene(scene)
             sym='○' if empty and self.highlight_empty_var.get() else '▣'
             tags=('empty_scene',) if empty and self.highlight_empty_var.get() else ('sync_bad',) if status in ('KO','REVIEW') else ('scene',)
+            link_mark = '⇄ ' if scene.get('link_group') else ''
             self.scene_tree.insert('','end',iid=sid,
-                text=self.tr(f"{sym}  {core.label(self.catalog,scene['number'])}    ({len(scene['shots'])} shot · {videos}V / {audios}A)"),
+                text=self.tr(f"{sym}  {link_mark}{core.label(self.catalog,scene['number'])}    ({len(scene['shots'])} shot · {videos}V / {audios}A)"),
                 values=(self._sync_label(status),),tags=tags,open=True)
             for sh,subs in visible:
                 all_shot=self._all_takes(sh)
@@ -1010,8 +1129,9 @@ class SceneSlateApp:
                 prefix='○  ' if empty_sh and self.highlight_empty_var.get() else '    '
                 tag=('empty_shot',) if empty_sh and self.highlight_empty_var.get() else ('sync_bad',) if status in ('KO','REVIEW') else ('shot',)
                 padding=self.catalog['settings']['padding']
+                link_mark = '⇄ ' if sh.get('link_group') else ''
                 self.scene_tree.insert(sid,'end',iid=tid,
-                    text=self.tr(f"{prefix}{self.catalog['settings']['shot_label']} {str(sh['number']).zfill(padding)}    {v} video / {a} audio"),
+                    text=self.tr(f"{prefix}{link_mark}{self.catalog['settings']['shot_label']} {str(sh['number']).zfill(padding)}    {v} video / {a} audio"),
                     values=(self._sync_label(status),),tags=tag,open=True)
                 for sub in subs:
                     status=scene_sync.node_status(sub['takes'])
@@ -1021,8 +1141,9 @@ class SceneSlateApp:
                     uid=f"u:{scene['number']}:{sh['number']}:{sub['id']}"
                     prefix='○  ' if sub_empty and self.highlight_empty_var.get() else '◦  '
                     tag=('empty_subshot',) if sub_empty and self.highlight_empty_var.get() else ('sync_bad',) if status in ('KO','REVIEW') else ('subshot',)
+                    link_mark = '⇄ ' if sub.get('link_group') else ''
                     self.scene_tree.insert(tid,'end',iid=uid,
-                        text=f"{prefix}{sub['name']}    {vid}V / {aud}A",
+                        text=f"{prefix}{link_mark}{sub['name']}    {vid}V / {aud}A", 
                         values=(self._sync_label(status),),tags=tag)
         if select and self.scene_tree.exists(select):
             self.scene_tree.selection_set(select);self.scene_tree.see(select)
@@ -1151,6 +1272,7 @@ class SceneSlateApp:
         if not target or num is None:return
         self.snapshot()
         new=core.reset_take_auto(self.catalog,*target,num,subshot_id=self.selected_subshot_id())
+        self._propagate_related_links(target[0], target[1], self.selected_subshot_id())
         self.last_take_number=new
         self.refresh_scene_tree(self.last_tree_selection);self.changed()
         self.notice('Numero ciak ripristinato alla sequenza automatica di inserimento.')
@@ -1163,6 +1285,7 @@ class SceneSlateApp:
         try:
             self.snapshot()
             new=core.set_take_number(self.catalog,*target,old,val,subshot_id=self.selected_subshot_id())
+            self._propagate_related_links(target[0], target[1], self.selected_subshot_id())
             self.last_take_number=new
             self.refresh_scene_tree(self.last_tree_selection);self.changed()
         except core.CatalogError as exc:
@@ -1173,6 +1296,7 @@ class SceneSlateApp:
         if not target or num is None:return
         if not messagebox.askyesno('Elimina ciak',f'Eliminare il ciak {num} e le sue associazioni?\nI file originali non saranno toccati.',parent=self.root):return
         self.snapshot();core.remove_take(self.catalog,*target,num,subshot_id=self.selected_subshot_id())
+        self._propagate_related_links(target[0], target[1], self.selected_subshot_id())
         self.last_take_number=None
         self.refresh_scene_tree(self.last_tree_selection);self.changed()
 
@@ -1180,6 +1304,7 @@ class SceneSlateApp:
         self.commit_notes();self.snapshot()
         n=core.add_scene(self.catalog)
         core.add_shot(self.catalog,n,1)
+        self._propagate_related_links(n)
         self.refresh_scene_tree(f't:{n}:1');self.changed()
         self.notice(f'Creata {core.label(self.catalog,n,1)}. Puoi trascinare i file sullo shot.')
 
@@ -1189,6 +1314,7 @@ class SceneSlateApp:
         if n is None:messagebox.showinfo('Scena richiesta','Seleziona prima una scena o un suo shot.',parent=self.root);return
         self.snapshot()
         h=core.add_shot(self.catalog,n)
+        self._propagate_related_links(n)
         self.refresh_scene_tree(f't:{n}:{h}');self.changed()
 
     def add_subshot(self):
@@ -1205,6 +1331,7 @@ class SceneSlateApp:
             self.commit_notes()
             name=core.clean_subshot_name(name)
             self.snapshot(); uid=core.add_subshot(self.catalog,*target,name)
+            self._propagate_related_links(target[0], target[1], None)
             self.refresh_scene_tree(f'u:{target[0]}:{target[1]}:{uid}')
             self.changed()
         except core.CatalogError as exc:
@@ -1221,8 +1348,10 @@ class SceneSlateApp:
         if not messagebox.askyesno('Conferma eliminazione',msg,parent=self.root):return
         self.snapshot()
         if h is None:core.remove_scene(self.catalog,n);sel=None
-        elif u:core.remove_subshot(self.catalog,n,h,u);sel=f't:{n}:{h}'
-        else:core.remove_shot(self.catalog,n,h);sel=f's:{n}'
+        elif u:
+            core.remove_subshot(self.catalog,n,h,u); self._propagate_related_links(n,h,None); sel=f't:{n}:{h}'
+        else:
+            core.remove_shot(self.catalog,n,h); self._propagate_related_links(n); sel=f's:{n}'
         self.refresh_scene_tree(sel);self.changed()
 
     def renumber(self):
@@ -1283,7 +1412,15 @@ class SceneSlateApp:
                         updates.append((take,key,value))
         if updates:
             self.snapshot()
-            for obj,key,value in updates:obj[key]=value
+            affected=[]
+            for obj,key,value in updates:
+                obj[key]=value
+            if target:
+                affected.append(target)
+            if take_key:
+                affected.append(take_key[:3])
+            for item in affected:
+                self._propagate_related_links(*item)
             self.changed()
 
     def attach_files(self,kind,paths,target=None):
@@ -1312,6 +1449,7 @@ class SceneSlateApp:
             except core.CatalogError as exc:errors.append(str(exc))
             selected_number=None
         if count:
+            self._propagate_related_links(n, h, sub)
             self.schedule_sync()
             self.last_take_number=first_attached['number'] if first_attached else None
             selection=f'u:{n}:{h}:{sub}' if sub else f't:{n}:{h}'
@@ -1332,6 +1470,7 @@ class SceneSlateApp:
             return 'break'
         if media['quality']==quality:return 'break'
         self.snapshot();media['quality']=quality
+        self._propagate_related_links(target[0], target[1], self.selected_subshot_id())
         self.refresh_scene_tree(self.last_tree_selection);self.changed()
         self.notice(f'Ciak {num} · {self.active_side}: {quality} = {core.QUALITIES[quality]}.')
         return 'break'
@@ -1344,6 +1483,7 @@ class SceneSlateApp:
             self.notice('Nessun file su questo lato.');return
         self.snapshot()
         core.remove_media(self.catalog,*target,num,self.active_side,self.selected_subshot_id())
+        self._propagate_related_links(target[0], target[1], self.selected_subshot_id())
         self.last_take_number=num if core.take_for(self.catalog,*target,num,self.selected_subshot_id()) else None
         self.refresh_scene_tree(self.last_tree_selection);self.changed()
         self.notice('Collegamento eliminato; nessun file originale modificato.')
@@ -1529,8 +1669,10 @@ class SceneSlateApp:
                 if not t.get('video') or not t.get('audio'):continue
                 if selected is not None and t is not selected:continue
                 status=scene_sync.effective_status(t)
-                if retry or status=='PENDING':
-                    if retry:t['sync']=None
+                old_method=(t.get('sync') or {}).get('method', 'waveform')
+                upgrade=old_method not in ('manual','multistage_waveform_v2')
+                if retry or status=='PENDING' or upgrade:
+                    if retry or upgrade:t['sync']=None
                     self._sync_worker.submit(t['video']['path'],t['audio']['path'])
 
     def poll_sync(self):
@@ -1542,11 +1684,15 @@ class SceneSlateApp:
                     if not (v and a):continue
                     if self._sync_worker.key(v['path'],a['path']) != key:continue
                     if result['signature'] != scene_sync.fingerprint(v['path'],a['path']):continue
+                    # Never overwrite a manually verified alignment with a late worker result.
                     current=take.get('sync') or {}
                     if current.get('method')=='manual' and scene_sync.effective_status(take)=='OK':continue
                     take['sync']=copy.deepcopy(result)
                     changed=True
         if changed:
+            for scene,shot,sub,container in core.iter_containers(self.catalog):
+                if any(t.get('sync') for t in container['takes']):
+                    self._propagate_related_links(scene['number'], shot['number'], sub['id'] if sub else None)
             self.changed()
             self.refresh_scene_tree()
         if not self._sync_worker.closed:
@@ -1570,7 +1716,7 @@ class SceneSlateApp:
         self.notice('Waveform synchronization queued.')
 
     def edit_sync(self):
-        """Open the precision editor for a paired take."""
+        """Open the precision sync editor; no media data changes until approved."""
         target=self.active_shot(quiet=True)
         number=self.selected_take()
         if target is None or number is None:
@@ -1595,6 +1741,7 @@ class SceneSlateApp:
                     error='Manually approved after listening; check long-take drift.')
             record['manual_verified']=True
             take['sync']=record
+            self._propagate_related_links(target[0], target[1], sub_id)
             self.changed()
             self.refresh_scene_tree()
             self.notice('Manual synchronization saved. XML export will use the verified offset.')
@@ -1607,11 +1754,20 @@ class SceneSlateApp:
         t=core.take_for(self.catalog,*target,num,self.selected_subshot_id())
         status=scene_sync.effective_status(t)
         record=t.get('sync') or {}
+        fps=float(self.catalog.get('settings',{}).get('timeline_fps',25))
+        offset=record.get('offset_seconds')
+        quant_note='N/A'
+        if offset is not None:
+            aligned=round(float(offset)*fps)/fps
+            quant_note=f'{(aligned-float(offset))*1000:+.1f} ms at {fps:g} fps'
         message=(f'{self.tr("Status:")} {status}\n{self.tr("Offset (audio source at video zero):")} '
-            f'{record.get("offset_seconds")} s\nCorrelation score: {record.get("score")}\n'
+            f'{offset} s\nCorrelation score: {record.get("score")}\n'
             f'{self.tr("Method:")} {record.get("method", "waveform")}\n'
+            f'Windows verified: {record.get("windows_verified", "N/A")}\n'
+            f'Window spread: {record.get("window_spread_ms", "N/A")} ms\n'
+            f'XML rounding error: {quant_note}\n'
             f'{self.tr("Note:")} {record.get("error", "") or "None"}\n\n'
-            'OK matches are still worth checking by listening.')
+            'OK indicates agreement of several acoustic windows; verify final playback in Resolve.')
         messagebox.showinfo(self.tr('Waveform sync details'),message,parent=self.root)
 
     def export(self):

@@ -75,18 +75,20 @@ class CoreTests(unittest.TestCase):
             new=c.set_take_number(self.cat,1,1,t1['number'],8)
             self.assertEqual(new,8)
             self.assertTrue(t1['manual_number'])
-            self.assertEqual(t2['number'],1)
+            self.assertEqual(t2['number'],2)
             self.assertEqual(c.reset_take_auto(self.cat,1,1,8),1)
         self.assertFalse(t1['manual_number'])
         self.assertEqual(t2['number'],2)
 
-    def test_duplicate_take_numbers_rejected(self):
+    def test_take_conflicts_shift_automatically_even_if_manual(self):
         t,_=c.add_media(self.cat,1,1,self.a,'video')
         t2,_=c.add_media(self.cat,1,1,self.b,'audio')
         c.set_take_number(self.cat,1,1,t2['number'],t['number'])
         self.assertTrue(t2['manual_number'])
-        self.assertNotEqual(t['number'],t2['number'])
-        with self.assertRaises(c.CatalogError):c.set_take_number(self.cat,1,1,t['number'],t2['number'])
+        self.assertEqual((t['number'],t2['number']),(2,1))
+        c.set_take_number(self.cat,1,1,t['number'],t2['number'])
+        self.assertEqual((t['number'],t2['number']),(1,2))
+        self.assertTrue(t2['manual_number'])
         with self.assertRaises(c.CatalogError):c.set_take_number(self.cat,1,1,t['number'],0)
 
     def test_remove_side_and_resequence(self):
@@ -124,7 +126,7 @@ class CoreTests(unittest.TestCase):
                                                    {'kind':'audio','path':str(self.b),'quality':'R','notes':'a'}]}]}]}
         filename=self.dir/'legacy.json';filename.write_text(json.dumps(old))
         migrated=c.load_catalog(filename)
-        self.assertEqual(migrated['version'],5)
+        self.assertEqual(migrated['version'],c.VERSION)
         takes=migrated['scenes'][0]['shots'][0]['takes']
         self.assertEqual(len(takes),2)
         self.assertEqual(sum(bool(t['video']) for t in takes),1)
@@ -132,7 +134,7 @@ class CoreTests(unittest.TestCase):
         self.assertTrue(all(bool(t['video']) != bool(t['audio']) for t in takes))
         self.assertEqual(sorted(m['quality'] for _,_,_,_,m in c.iter_media(migrated)),['B','R'])
         c.save_catalog(migrated,self.dir/'new.json')
-        self.assertEqual(c.load_catalog(self.dir/'new.json')['version'],5)
+        self.assertEqual(c.load_catalog(self.dir/'new.json')['version'],c.VERSION)
 
     def test_v1_backup_created_before_upgrade(self):
         legacy={'version':1,'name':'Old','settings':self.cat['settings'],'video_root':'','audio_root':'',
@@ -143,7 +145,7 @@ class CoreTests(unittest.TestCase):
         migrated=c.load_catalog(file)
         c.save_catalog(migrated,file)
         self.assertEqual((self.dir/'legacy.sceneslate.json.v1.bak').read_text(),original)
-        self.assertEqual(json.loads(file.read_text())['version'],5)
+        self.assertEqual(json.loads(file.read_text())['version'],c.VERSION)
 
     def test_custom_label(self):
         self.cat['settings']={'scene_label':'SC','shot_label':'INQ','separator':' - ','padding':3}

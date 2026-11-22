@@ -101,6 +101,17 @@ def planned_segment(take,fps,warnings,reference):
             lag=float(take['sync']['offset_seconds'])
             video_in=max(0.,-lag)
             audio_in=max(0.,lag)
+            # FCP7 XML stores source in/out points as *integer timeline
+            # frames*. Even a sub-millisecond sync estimate is rounded on
+            # export. Do not claim the XML remains sample-accurate.
+            frame_error = ((round(audio_in*fps)/fps-audio_in) -
+                           (round(video_in*fps)/fps-video_in))*1000
+            if abs(frame_error) > 5.0:
+                warning = (f'{reference}: FCP7 XML frame quantization ' 
+                           f'{frame_error:+.1f} ms at {fps:g} fps; '
+                           'fine-adjust audio in Resolve if precision matters')
+                if warning not in warnings:
+                    warnings.append(warning)
     if video and not vinfo['video']:
         warnings.append(f'SKIP {reference}: no video stream')
         return None

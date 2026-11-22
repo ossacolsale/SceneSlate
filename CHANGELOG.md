@@ -1,22 +1,38 @@
 # Changelog
 
-## 3.5.0 — Manual precision synchronization editor
+## 3.7.0 — Multiresolution audio synchronization
 
-- Added a bilingual waveform editor for paired camera and external recorder audio, with interactive waveform drag, pan/zoom, numeric offsets, and ±1/10/100 ms and 1-second nudges.
-- Added non-destructive 7-second stereo audition previews: camera left/recorder right, mixed, and independent solo modes. Windows uses native WAV playback; Linux supports ffplay/paplay/aplay.
-- Added explicit human confirmation of synchronization, saved with a source fingerprint, method and manual verification flag.
-- Prevented in-flight automatic sync results from overwriting verified manual offsets. Automatic retry prompts before replacing human approval.
-- Preserved existing catalog schema, CSV fields, sync status aggregation and XML timeline exports. Documented the whole-frame precision limit of FCP7 XML.
-- Added regression tests for positive and negative offsets, stereo preview modes, GUI approval, persistence and worker-race protection.
+- Replaced single global low-rate peak matching with a multi-stage search: waveform correlation, log-amplitude envelope, high-resolution window consensus and partially whitened GCC-PHAT when NumPy is available.
+- Refined automatic offset resolution to 0.125 ms before optional sub-sample interpolation; included protection against repetitive material, polarity reversal, quiet passages and conflicting independent windows.
+- Added adaptive high-energy verification windows to reduce false `REVIEW` due to speech pauses, and preserved `REVIEW` when multiple plausible offsets or drift exist.
+- Added sync diagnostics and explicit FCP7 XML quantization warnings: at 25 fps audio in-points are rounded to 40-ms frames, which is a separate limitation from waveform precision.
+- Automatically reanalyze older non-manual synchronization records, while retaining manually verified matches and the original media files.
+- Bundled optional NumPy acceleration in standalone release executables; included tests for real AAC media, <5-ms alignment, unrelated tracks, repetitive content and the pure-standard-library fallback.
+
+## 3.6.0 — Logo, take cascading and linked containers
+
+- Added a new SceneSlate logo asset (`sceneslate_logo.png`) and wired it into the desktop UI as the window/app branding.
+- Added take-number cascading: when a take number is edited manually, later conflicting take numbers shift upward coherently instead of blocking the edit.
+- Added link groups for scenes, shots and sub-shots. Linked items of the same level mirror descriptions and take-level changes automatically.
+- Added a **Links… / Collegamenti…** management dialog and tree indicators (`⇄`) so linked items can be selected or unlinked from any member.
+- Pasted content no longer carries link-group metadata into the destination.
+
+## 3.5.0 — Precision manual synchronization editor
+
+- Added a bilingual, modal editor with stacked camera and recorder waveforms, pan/zoom, draggable external-audio offset, direct seconds input and 1/10/100 ms plus 1-second nudges.
+- Added non-destructive stereo listening previews with simultaneous left-camera/right-recorder monitoring, mixed audio or independent source audition.
+- Added explicit manual confirmation (`method: manual`, `manual_verified: true`), source fingerprint checks and protection against background workers overwriting approved offsets.
+- Manual OK uses existing take statuses, filters and XML exports; requires no schema migration and no extra Python packages. FFmpeg/ffprobe remain necessary for decoding; a WAV player is required on Linux.
+- Added integration, persistence, UI and signed-offset preview tests. The FCP7 XML interchange remains frame-based, even though manually stored offsets are millisecond-precise.
 
 ## 3.4 — Opt-in FFmpeg setup on Windows
 
-- User-approved installation of ffmpeg.exe and ffprobe.exe into the per-user configuration directory; no administrator rights or PATH changes.
-- Download source is the gyan.dev Windows build provider linked by ffmpeg.org; verify its published SHA-256 and extract only the required binaries.
-- Non-blocking progress dialog, safe cancellation and recovery without modifying source footage.
-- Ask again on each launch when dependencies are missing, unless “Do not ask again” is enabled. Restore setup and reminders using the Tools menu.
-- Detect managed binaries automatically and retry take synchronization previously blocked solely because of missing FFmpeg/ffprobe.
-- Preserve English/Italian UI and test download integrity, rollback, setting persistence and GUI controls without any live network access.
+- Consent-based user-local FFmpeg/ffprobe installation from the Windows builds provider linked by ffmpeg.org, after matching its published SHA-256 checksum.
+- Non-blocking download and extraction with a progress dialog and cancellation; installation requires no administrator rights or changes to PATH.
+- Per-user `Do not ask again` preference; the setup prompt is shown at subsequent launches when tools are missing unless disabled, with a recovery command under Tools.
+- Windows-managed FFmpeg is found automatically; after installation, missing-dependency KO synchronization results are automatically retried.
+- Installer works with the existing English/Italian UI, including translated setup and progress messages.
+- Offline installer tests cover integrity, cancellation, missing members, settings persistence, and recovery, without network access.
 
 ## 3.3 — Waveform sync and non-destructive review timelines
 
@@ -27,8 +43,6 @@
 - Audio is included in XML only when its waveform match is confidently OK; otherwise no invented alignment and a clear report warning.
 - Catalog schema 5; compatibility with schema 1–4 and upgrade backups.
 - Regression tests for waveform lag direction, silence/unrelated audio rejection, fallback without NumPy, real FFmpeg media, XML in/out points, migration and GUI statuses.
-
-# Changelog
 
 ## 3.2 — Bilingual interface and English output naming
 

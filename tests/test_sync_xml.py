@@ -72,7 +72,7 @@ class SyncMathTests(unittest.TestCase):
             old=p/'catalog.sceneslate.json'
             old.write_text(json.dumps(c),encoding='utf-8')
             new=core.load_catalog(old)
-            self.assertEqual(new['version'],5)
+            self.assertEqual(new['version'],core.VERSION)
             self.assertIsNone(new['scenes'][0]['shots'][0]['takes'][0]['sync'])
             core.save_catalog(new,old)
             self.assertTrue((p/'catalog.sceneslate.json.v4.bak').is_file())

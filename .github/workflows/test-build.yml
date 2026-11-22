@@ -1,7 +1,6 @@
 name: Publish SceneSlate release
 
-# Normal pushes and pull requests do not trigger Actions.
-# Create and publish a GitHub Release to run cross-platform checks and build assets.
+# Routine commits never run hosted jobs. Build only after a release is published.
 on:
   release:
     types: [published]
@@ -13,7 +12,6 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-
   build-and-publish:
     name: Release (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -30,6 +28,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
+      - name: Install NumPy acceleration
+        run: python -m pip install numpy
       - name: Install Linux test dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y python3-tk xvfb ffmpeg
@@ -43,10 +43,12 @@ jobs:
         run: python -m pip install pyinstaller
       - name: Build Windows executable
         if: runner.os == 'Windows'
-        run: python -m PyInstaller --onefile --windowed --noconfirm --name SceneSlate --paths . scene_slate.pyw
+        shell: pwsh
+        run: python -m PyInstaller --onefile --windowed --noconfirm --name SceneSlate --paths . --icon sceneslate_logo.ico --add-data 'sceneslate_icon.png;.' --add-data 'sceneslate_logo.ico;.' scene_slate.pyw
       - name: Build Linux executable
         if: runner.os == 'Linux'
-        run: python -m PyInstaller --onefile --windowed --noconfirm --name SceneSlate --paths . scene_slate.py
+        shell: bash
+        run: python -m PyInstaller --onefile --windowed --noconfirm --name SceneSlate --paths . --add-data 'sceneslate_icon.png:.' --add-data 'sceneslate_logo.ico:.' scene_slate.py
       - name: Package Windows executable
         if: runner.os == 'Windows'
         shell: pwsh
@@ -55,13 +57,13 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: tar -czf "SceneSlate-$GITHUB_REF_NAME-linux-x64.tar.gz" -C dist SceneSlate
-      - name: Publish Windows binary to GitHub Release
+      - name: Publish Windows binary directly to GitHub Release
         if: runner.os == 'Windows'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$env:GITHUB_REF_NAME" "SceneSlate-$env:GITHUB_REF_NAME-windows-x64.zip" --clobber
-      - name: Publish Linux binary to GitHub Release
+      - name: Publish Linux binary directly to GitHub Release
         if: runner.os == 'Linux'
         shell: bash
         env:

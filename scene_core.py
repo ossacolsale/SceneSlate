@@ -18,7 +18,7 @@ from uuid import uuid4
 
 import scene_sync
 
-VERSION = 5
+VERSION = 6
 QUALITIES = {'B': 'Buona', 'R': 'Riserva', 'S': 'Scarto'}
 VIDEO_EXT = {'.mov','.mp4','.mxf','.avi','.mkv','.mts','.m2ts','.mpg','.mpeg','.wmv','.webm','.r3d','.braw','.mp4v','.m4v'}
 AUDIO_EXT = {'.wav','.bwf','.mp3','.flac','.aif','.aiff','.m4a','.ogg','.wma','.caf'}
@@ -62,7 +62,7 @@ def next_number(entries):
 def add_scene(c, number=None):
     number = positive_number(number) if number is not None else next_number(c['scenes'])
     if scene_for(c, number): raise CatalogError(f'La scena {number} esiste già.')
-    c['scenes'].append({'number': number, 'description': '', 'notes': '', 'shots': []})
+    c['scenes'].append({'number': number, 'description': '', 'notes': '', 'shots': [], 'link_group': None})
     c['scenes'].sort(key=lambda s:s['number'])
     return number
 
@@ -86,7 +86,7 @@ def add_shot(c, scene_number, number=None):
     if scene is None: raise CatalogError('Seleziona una scena.')
     number = positive_number(number) if number is not None else next_number(scene['shots'])
     if shot_for(c, scene_number, number): raise CatalogError(f'Lo shot {number} esiste già.')
-    scene['shots'].append({'number':number,'description':'','notes':'','takes':[],'subshots':[]})
+    scene['shots'].append({'number':number,'description':'','notes':'','takes':[],'subshots':[],'link_group': None})
     scene['shots'].sort(key=lambda x:x['number'])
     return number
 
@@ -143,7 +143,7 @@ def add_subshot(c, scene_number, shot_number, name):
     name = clean_subshot_name(name)
     if any(u['name'].casefold() == name.casefold() for u in shot.get('subshots', [])):
         raise CatalogError(f'Sotto-shot {name} già presente nello shot.')
-    item = {'id': uuid4().hex, 'name': name, 'description': '', 'notes': '', 'takes': []}
+    item = {'id': uuid4().hex, 'name': name, 'description': '', 'notes': '', 'takes': [], 'link_group': None}
     shot.setdefault('subshots', []).append(item)
     return item['id']
 
@@ -258,16 +258,26 @@ def add_take(c, scene_number, shot_number, number=None, subshot_id=None):
 
 
 def set_take_number(c,scene_number,shot_number,old,new,subshot_id=None):
+    container=container_for(c,scene_number,shot_number,subshot_id)
     take=take_for(c,scene_number,shot_number,old,subshot_id)
     if take is None:raise CatalogError('Ciak non trovato.')
     new=positive_number(new)
-    occupied=take_for(c,scene_number,shot_number,new,subshot_id) if new!=old else None
-    if occupied and occupied.get('manual_number',False):
-        raise CatalogError(f'Ciak {new} già fissato manualmente.')
-    # When occupied by an automatically numbered take, the automatic one shifts.
-    # This makes manual renumbering ergonomic even when there are no gaps.
-    take['number']=new; take['manual_number']=True
-    renumber_auto_takes(container_for(c,scene_number,shot_number,subshot_id))
+    if new == old:
+        take['manual_number']=True
+        return take['number']
+    others=sorted([t for t in container['takes'] if t is not take], key=lambda t:(t['number'], t.get('order',0)))
+    occupied={t['number'] for t in others}
+    shifts=[]
+    cursor=new
+    while cursor in occupied:
+        victim=next(t for t in others if t['number']==cursor)
+        shifts.append(victim)
+        cursor += 1
+    for victim in reversed(shifts):
+        victim['number'] += 1
+    take['number']=new
+    take['manual_number']=True
+    container['takes'].sort(key=lambda t:(t['number'], t.get('order',0)))
     return take['number']
 
 
@@ -368,12 +378,16 @@ def validate(c):
     for scene in c['scenes']:
         n = positive_number(scene['number'])
         if not isinstance(scene.get('description'),str):raise CatalogError('Descrizione scena non valida.')
+        if scene.get('link_group') is not None and not isinstance(scene.get('link_group'), str):
+            raise CatalogError('Collegamento scena non valido.')
         if n in scene_nums:raise CatalogError(f'Scena duplicata: {n}')
         scene_nums.add(n)
         shot_nums = set()
         for shot in scene['shots']:
             sn = positive_number(shot['number'])
             if not isinstance(shot.get('description'),str):raise CatalogError('Descrizione shot non valida.')
+            if shot.get('link_group') is not None and not isinstance(shot.get('link_group'), str):
+                raise CatalogError('Collegamento shot non valido.')
             if sn in shot_nums:raise CatalogError(f'Shot duplicato: {n}/{sn}')
             shot_nums.add(sn)
             validate_takes(shot, f'{n}/{sn}')
@@ -383,6 +397,8 @@ def validate(c):
             for sub in shot['subshots']:
                 name = clean_subshot_name(sub.get('name'))
                 if not isinstance(sub.get('description'),str):raise CatalogError('Descrizione sotto-shot non valida.')
+                if sub.get('link_group') is not None and not isinstance(sub.get('link_group'), str):
+                    raise CatalogError('Collegamento sotto-shot non valido.')
                 if not isinstance(sub.get('id'), str) or not sub['id'] or ':' in sub['id']:
                     raise CatalogError('Identificatore sotto-shot non valido.')
                 if name.casefold() in names or sub['id'] in ids:
@@ -453,6 +469,15 @@ def migrate_legacy(data):
                     for take in container.get('takes', []):
                         take.setdefault('sync', None)
         data.setdefault('settings', {}).setdefault('timeline_fps', 25.0)
+        data['version'] = 5
+    if data.get('version') == 5:
+        data = copy.deepcopy(data)
+        for scene in data.get('scenes', []):
+            scene.setdefault('link_group', None)
+            for shot in scene.get('shots', []):
+                shot.setdefault('link_group', None)
+                for sub in shot.get('subshots', []):
+                    sub.setdefault('link_group', None)
         data['version'] = VERSION
     return data
 
@@ -491,6 +516,7 @@ def _merge_takes(dst, takes):
 def _append_subshot(shot, item, name=None):
     sub = copy.deepcopy(item)
     sub['id'] = uuid4().hex
+    sub['link_group'] = None
     sub['name'] = unique_subshot_name(shot, clean_subshot_name(name if name is not None else sub['name']))
     shot.setdefault('subshots', []).append(sub)
     return sub
@@ -498,11 +524,13 @@ def _append_subshot(shot, item, name=None):
 
 def _append_shot(scene, item):
     sh = copy.deepcopy(item)
+    sh['link_group'] = None
     existing = {x['number'] for x in scene['shots']}
     if sh['number'] in existing:
         sh['number'] = max(existing, default=0)+1
     for sub in sh.get('subshots', []):
         sub['id'] = uuid4().hex
+        sub['link_group'] = None
     scene['shots'].append(sh)
     scene['shots'].sort(key=lambda x: x['number'])
     return sh
@@ -565,6 +593,134 @@ def paste_snapshot(c, snapshot, scene_number, shot_number=None, subshot_id=None)
     _append_subshot(shot, data)
     return 'Creato un nuovo shot con il sotto-shot copiato.'
 
+
+
+def _kind_and_node(c, scene_number, shot_number=None, subshot_id=None):
+    if subshot_id is not None:
+        node = subshot_for(c, scene_number, shot_number, subshot_id)
+        kind = 'subshot'
+    elif shot_number is not None:
+        node = shot_for(c, scene_number, shot_number)
+        kind = 'shot'
+    else:
+        node = scene_for(c, scene_number)
+        kind = 'scene'
+    return kind, node
+
+
+def node_ref(scene_number, shot_number=None, subshot_id=None):
+    if subshot_id is not None:
+        return f'subshot:{scene_number}:{shot_number}:{subshot_id}'
+    if shot_number is not None:
+        return f'shot:{scene_number}:{shot_number}'
+    return f'scene:{scene_number}'
+
+
+def iter_nodes(c, kind=None):
+    for scene in sorted(c['scenes'], key=lambda s: s['number']):
+        if kind in (None, 'scene'):
+            yield node_ref(scene['number']), 'scene', scene
+        for shot in sorted(scene['shots'], key=lambda sh: sh['number']):
+            if kind in (None, 'shot'):
+                yield node_ref(scene['number'], shot['number']), 'shot', shot
+            for sub in shot.get('subshots', []):
+                if kind in (None, 'subshot'):
+                    yield node_ref(scene['number'], shot['number'], sub['id']), 'subshot', sub
+
+
+def linked_refs(c, scene_number, shot_number=None, subshot_id=None):
+    kind, node = _kind_and_node(c, scene_number, shot_number, subshot_id)
+    if node is None:
+        raise CatalogError('Elemento collegabile non trovato.')
+    gid = node.get('link_group')
+    if not gid:
+        return [node_ref(scene_number, shot_number, subshot_id)]
+    return [ref for ref, node_kind, other in iter_nodes(c, kind) if other.get('link_group') == gid]
+
+
+def _strip_links(obj):
+    if isinstance(obj, dict):
+        out = {}
+        for key, value in obj.items():
+            if key == 'link_group':
+                out[key] = None
+            else:
+                out[key] = _strip_links(value)
+        return out
+    if isinstance(obj, list):
+        return [_strip_links(x) for x in obj]
+    return copy.deepcopy(obj)
+
+
+def _node_payload(node, kind):
+    if kind == 'scene':
+        keys = ['description', 'notes', 'shots']
+    elif kind == 'shot':
+        keys = ['description', 'notes', 'takes', 'subshots']
+    else:
+        keys = ['description', 'notes', 'takes']
+    return _strip_links({key: node.get(key) for key in keys})
+
+
+def _apply_payload(node, kind, payload):
+    for key, value in payload.items():
+        node[key] = copy.deepcopy(value)
+    if kind == 'scene':
+        for sh in node.get('shots', []):
+            sh.setdefault('link_group', None)
+            for sub in sh.get('subshots', []):
+                sub.setdefault('link_group', None)
+    elif kind == 'shot':
+        for sub in node.get('subshots', []):
+            sub.setdefault('link_group', None)
+
+
+def propagate_links(c, scene_number, shot_number=None, subshot_id=None):
+    kind, source = _kind_and_node(c, scene_number, shot_number, subshot_id)
+    if source is None:
+        raise CatalogError('Elemento collegabile non trovato.')
+    gid = source.get('link_group')
+    if not gid:
+        return 0
+    payload = _node_payload(source, kind)
+    source_ref = node_ref(scene_number, shot_number, subshot_id)
+    changed = 0
+    for ref, node_kind, other in iter_nodes(c, kind):
+        if ref == source_ref or other.get('link_group') != gid:
+            continue
+        _apply_payload(other, kind, payload)
+        changed += 1
+    return changed
+
+
+def configure_links(c, scene_number, shot_number=None, subshot_id=None, member_refs=None):
+    kind, source = _kind_and_node(c, scene_number, shot_number, subshot_id)
+    if source is None:
+        raise CatalogError('Elemento collegabile non trovato.')
+    source_ref = node_ref(scene_number, shot_number, subshot_id)
+    selected = {source_ref}
+    if member_refs:
+        for ref in member_refs:
+            selected.add(ref)
+    valid_refs = {}
+    for ref, node_kind, node in iter_nodes(c, kind):
+        valid_refs[ref] = node
+    for ref in tuple(selected):
+        if ref not in valid_refs:
+            raise CatalogError('Selezione collegamenti non valida.')
+    if len(selected) <= 1:
+        source['link_group'] = None
+        return None
+    gid = source.get('link_group') or next((valid_refs[ref].get('link_group') for ref in selected if valid_refs[ref].get('link_group')), None) or uuid4().hex
+    for ref, node_kind, node in iter_nodes(c, kind):
+        if node.get('link_group') == gid and ref not in selected:
+            node['link_group'] = None
+    for ref in selected:
+        valid_refs[ref]['link_group'] = gid
+    propagate_links(c, scene_number, shot_number, subshot_id)
+    return gid
+
+
 def file_time_from_path(path):
     try:return birth_timestamp(Path(path).stat())[0]
     except (OSError,ValueError):return float('inf')
@@ -583,7 +739,7 @@ def save_catalog(c,filename):
         try:
             with dest.open('r',encoding='utf-8') as old_file:
                 old_version=json.load(old_file).get('version')
-            if old_version in (1, 2, 3, 4):
+            if old_version in (1, 2, 3, 4, 5):
                 backup=dest.with_name(dest.name+f'.v{old_version}.bak')
                 if not backup.exists():shutil.copy2(dest,backup)
         except (OSError,ValueError,AttributeError):
