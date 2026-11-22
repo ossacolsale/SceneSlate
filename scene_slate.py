@@ -41,6 +41,7 @@ import scene_session as session
 import scene_sync
 import scene_dependencies
 from scene_sync_worker import SyncWorker
+from scene_sync_editor import SyncEditor
 
 APP_NAME = 'SceneSlate'
 VIDEO = 'video'
@@ -507,6 +508,7 @@ class SceneSlateApp:
         ttk.Button(detail_head,text='+ Ciak',command=self.new_take).pack(side='right',padx=(4,0))
         ttk.Button(detail_head,text='↻ Sync',command=self.retry_sync).pack(side='right',padx=(4,0))
         ttk.Button(detail_head,text='Sync details',command=self.sync_details).pack(side='right',padx=(4,0))
+        ttk.Button(detail_head,text='✎ Sync editor',command=self.edit_sync).pack(side='right',padx=(4,0))
         ttk.Button(detail_head,text='N° ciak…',command=self.edit_take_number).pack(side='right',padx=(4,0))
         ttk.Button(detail_head,text='↻ Auto',command=self.reset_take_number).pack(side='right',padx=(4,0))
         ttk.Button(detail_head,text='− Ciak',command=self.delete_take).pack(side='right',padx=(4,0))
@@ -1540,6 +1542,8 @@ class SceneSlateApp:
                     if not (v and a):continue
                     if self._sync_worker.key(v['path'],a['path']) != key:continue
                     if result['signature'] != scene_sync.fingerprint(v['path'],a['path']):continue
+                    current=take.get('sync') or {}
+                    if current.get('method')=='manual' and scene_sync.effective_status(take)=='OK':continue
                     take['sync']=copy.deepcopy(result)
                     changed=True
         if changed:
@@ -1555,11 +1559,47 @@ class SceneSlateApp:
         t=core.take_for(self.catalog,*target,num,self.selected_subshot_id())
         if not t or not t.get('video') or not t.get('audio'):
             self.notice('This take needs both video and audio.');return
+        if scene_sync.effective_status(t)=='OK' and (t.get('sync') or {}).get('method')=='manual':
+            if not messagebox.askyesno('Replace manual alignment?',
+                'Automatic synchronization will replace the manually verified offset. Continue?',parent=self.root):
+                return
         t['sync']=None
         self.schedule_sync(retry=True,selected=t)
         self.refresh_scene_tree()
         self.changed()
         self.notice('Waveform synchronization queued.')
+
+    def edit_sync(self):
+        """Open the precision editor for a paired take."""
+        target=self.active_shot(quiet=True)
+        number=self.selected_take()
+        if target is None or number is None:
+            self.notice('Select a take to edit synchronization.');return
+        sub_id=self.selected_subshot_id()
+        take=core.take_for(self.catalog,*target,number,sub_id)
+        if not take or not take.get('video') or not take.get('audio'):
+            self.notice('This take needs both video and audio.');return
+        video=take['video']['path'];audio=take['audio']['path']
+        signature=scene_sync.fingerprint(video,audio)
+        if not all(scene_sync.executables()):
+            self.ffmpeg_setup(manual=True)
+            return
+
+        def approve(offset):
+            if not (take.get('video') and take.get('audio')) or \
+                scene_sync.fingerprint(take['video']['path'],take['audio']['path'])!=signature:
+                raise RuntimeError('Paired media changed while editing; reopen the sync editor.')
+            self.snapshot()
+            record=scene_sync.sync_record('OK',offset_seconds=offset,score=None,
+                    method='manual',signature=signature,
+                    error='Manually approved after listening; check long-take drift.')
+            record['manual_verified']=True
+            take['sync']=record
+            self.changed()
+            self.refresh_scene_tree()
+            self.notice('Manual synchronization saved. XML export will use the verified offset.')
+
+        SyncEditor(self.root,video,audio,take.get('sync'),approve,language=self.language)
 
     def sync_details(self):
         target=self.active_shot(quiet=True);num=self.selected_take()
