@@ -6,17 +6,7 @@ on:
       - .github/workflows/publish-v38-once.yml
 permissions: {}
 jobs:
-  update-release-tag:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Pin published Release to the Windows test fix
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/v3.8.0" -f sha=0a13835d3276e14d70d2ccdba00790ff0ebda5f6 -F force=true
   build:
-    needs: update-release-tag
     name: Test and build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     permissions:
@@ -28,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: v3.8.0
+          ref: 0a13835d3276e14d70d2ccdba00790ff0ebda5f6
           persist-credentials: false
       - uses: actions/setup-python@v6
         with:
