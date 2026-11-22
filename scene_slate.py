@@ -8,6 +8,9 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import threading
+import webbrowser
+from queue import Queue, Empty
 import tkinter as tk
 from tkinter import ttk, filedialog as _filedialog, messagebox as _messagebox, simpledialog as _simpledialog
 from scene_i18n import LANGUAGES, translate
@@ -36,6 +39,7 @@ simpledialog = _TranslatedDialog(_simpledialog)
 import scene_core as core
 import scene_session as session
 import scene_sync
+import scene_dependencies
 from scene_sync_worker import SyncWorker
 
 APP_NAME = 'SceneSlate'
@@ -342,6 +346,9 @@ class SceneSlateApp:
         self.filepath=None
         self._session_dir=session.config_dir()
         self._session= session.read_state(self._session_dir)
+        self._ffmpeg_prompt_suppressed = bool(self._session.get('ffmpeg_prompt_suppressed',False))
+        self._ffmpeg_ask_var = tk.BooleanVar(value=not self._ffmpeg_prompt_suppressed)
+        self._ffmpeg_installing = False
         self.language = self._session.get('language') if self._session.get('language') in LANGUAGES else 'en'
         global _ACTIVE_LANGUAGE
         _ACTIVE_LANGUAGE = self.language
@@ -430,6 +437,14 @@ class SceneSlateApp:
         language_picker=ttk.Combobox(actions,textvariable=self.language_var,
                 values=list(LANGUAGES.values()),state='readonly',width=10,style='Sort.TCombobox')
         language_picker.pack(side='right',padx=(4,0))
+        self.tools_button=ttk.Menubutton(actions,text='Tools ▾')
+        self.tools_menu=tk.Menu(self.tools_button,tearoff=False)
+        self.tools_menu.add_command(label='FFmpeg setup…',command=lambda:self.ffmpeg_setup(manual=True))
+        self.tools_menu.add_checkbutton(label='Ask at startup when FFmpeg is missing',
+                       variable=self._ffmpeg_ask_var,command=self.set_ffmpeg_reminders)
+        self.tools_menu.add_command(label='FFmpeg download website',command=lambda:webbrowser.open(scene_dependencies.SOURCE_PAGE))
+        self.tools_button.configure(menu=self.tools_menu)
+        self.tools_button.pack(side='right',padx=(8,0))
         ttk.Label(actions,text='Lingua:',style='Sub.TLabel').pack(side='right',padx=(12,0))
         language_picker.bind('<<ComboboxSelected>>',self.change_language)
         self.language_picker=language_picker
@@ -588,6 +603,7 @@ class SceneSlateApp:
             for child in widget.winfo_children():visit(child)
         visit(self.root)
         visit(self.scene_context)
+        visit(self.tools_menu)
         for browser in (self.video_browser,self.audio_browser): browser.relabel()
         self.media_tree.heading('take',text=self.tr('Ciak'))
         self.media_tree.heading('vq',text='B/R/S')
@@ -612,6 +628,145 @@ class SceneSlateApp:
         self.localize_ui()
         self.queue_save_session()
 
+
+    def set_ffmpeg_reminders(self):
+        self._ffmpeg_prompt_suppressed = not self._ffmpeg_ask_var.get()
+        self.queue_save_session()
+
+    def maybe_prompt_ffmpeg(self):
+        """Ask on each launch if both tools are not found, unless suppressed."""
+        if self._ffmpeg_prompt_suppressed or self._ffmpeg_installing:return
+        if not all(scene_sync.executables()):
+            self.ffmpeg_setup(manual=False)
+
+    def ffmpeg_setup(self, manual=False):
+        """The consent dialog has no network side effects; install only on click."""
+        if self._ffmpeg_installing:return
+        binaries=scene_sync.executables()
+        if all(binaries):
+            if manual:
+                messagebox.showinfo(self.tr('FFmpeg is ready'),
+                    self.tr('Both required tools are available:')+'\n\n'+str(binaries[0])+'\n'+str(binaries[1]),
+                    parent=self.root)
+            return
+        dialog=tk.Toplevel(self.root)
+        dialog.title(self.tr('Set up FFmpeg'))
+        dialog.configure(bg=self.panel)
+        dialog.transient(self.root)
+        frame=ttk.Frame(dialog,style='Panel.TFrame',padding=18)
+        frame.pack(fill='both',expand=True)
+        ttk.Label(frame,text=self.tr('FFmpeg and ffprobe are missing.'),
+                  style='Section.TLabel').pack(anchor='w',pady=(0,10))
+        if sys.platform == 'win32':
+            explanation=self.tr('SceneSlate can download the Windows essentials build from gyan.dev (linked by ffmpeg.org), verify its published SHA-256 checksum, and install ffmpeg.exe and ffprobe.exe into your user profile. No administrator access or PATH changes are needed. The download is approximately 100–150 MB. No media files will be changed.')
+        else:
+            explanation=self.tr('Automatic installation is currently supported on Windows. On Linux install FFmpeg using your package manager (for example: sudo apt install ffmpeg) and restart SceneSlate.')
+        ttk.Label(frame,text=explanation,style='Panel.TLabel',wraplength=465,
+                  justify='left').pack(anchor='w',fill='x',pady=(0,12))
+        dont_ask=tk.BooleanVar(value=self._ffmpeg_prompt_suppressed)
+        ttk.Checkbutton(frame,text=self.tr('Do not ask again at startup'),variable=dont_ask).pack(anchor='w',pady=(0,12))
+        footer=ttk.Frame(frame,style='Panel.TFrame');footer.pack(fill='x')
+        def save_preference():
+            self._ffmpeg_prompt_suppressed = bool(dont_ask.get())
+            self._ffmpeg_ask_var.set(not self._ffmpeg_prompt_suppressed)
+            self.queue_save_session()
+        def dismiss():
+            save_preference();dialog.destroy()
+        def install():
+            save_preference();dialog.destroy();self.install_ffmpeg_windows()
+        ttk.Button(footer,text=self.tr('Later'),command=dismiss).pack(side='right',padx=(5,0))
+        if sys.platform == 'win32':
+            ttk.Button(footer,text=self.tr('Download and install'),command=install,
+                       style='Primary.TButton').pack(side='right')
+        else:
+            ttk.Button(footer,text=self.tr('Open FFmpeg website'),
+                  command=lambda:webbrowser.open('https://ffmpeg.org/download.html')).pack(side='right')
+        center_window(dialog,self.root,530,300)
+        dialog.protocol('WM_DELETE_WINDOW',dismiss)
+        dialog.grab_set()
+
+    def install_ffmpeg_windows(self):
+        """Background installation: Tk is touched only in the polling callback."""
+        if sys.platform != 'win32' or self._ffmpeg_installing:return
+        self._ffmpeg_installing=True
+        events=Queue()
+        cancelled=threading.Event()
+        dialog=tk.Toplevel(self.root)
+        dialog.title(self.tr('Installing FFmpeg'))
+        dialog.configure(bg=self.panel)
+        dialog.transient(self.root)
+        frame=ttk.Frame(dialog,style='Panel.TFrame',padding=18)
+        frame.pack(fill='both',expand=True)
+        progress_label=tk.StringVar(value=self.tr('Connecting to the download server…'))
+        ttk.Label(frame,textvariable=progress_label,style='Panel.TLabel',wraplength=450).pack(fill='x',pady=(0,12))
+        bar=ttk.Progressbar(frame,length=400,mode='indeterminate');bar.pack(fill='x',pady=(0,12))
+        bar.start(12)
+        def cancel():
+            cancelled.set()
+            cancel_button.configure(state='disabled')
+            progress_label.set(self.tr('Cancelling download…'))
+        cancel_button=ttk.Button(frame,text=self.tr('Cancel'),command=cancel)
+        cancel_button.pack(side='right')
+        center_window(dialog,self.root,510,170)
+        dialog.protocol('WM_DELETE_WINDOW',cancel)
+        dialog.grab_set()
+        def background():
+            try:
+                installed=scene_dependencies.install_windows(
+                    callback=lambda phase,done,total:events.put(('progress',phase,done,total)),
+                    cancel=cancelled)
+                events.put(('done',installed))
+            except Exception as exc:
+                events.put(('error',str(exc)))
+        threading.Thread(target=background,name='SceneSlateFFmpegInstaller',daemon=True).start()
+        def poll():
+            if not dialog.winfo_exists():return
+            terminal=None
+            while True:
+                try: event=events.get_nowait()
+                except Empty:break
+                if event[0]=='progress':
+                    _,phase,done,total=event
+                    if phase=='checksum':progress_label.set(self.tr('Checking the vendor SHA-256 checksum…'))
+                    elif phase=='download':
+                        if total:
+                            bar.stop();bar.configure(mode='determinate',maximum=total,value=done)
+                            progress_label.set(self.tr('Downloading FFmpeg:')+f' {done/(1024*1024):.1f} / {total/(1024*1024):.1f} MB')
+                        else:progress_label.set(self.tr('Downloading FFmpeg:')+f' {done/(1024*1024):.1f} MB')
+                    elif phase=='extract':progress_label.set(self.tr('Verifying and extracting the executables…'))
+                else:terminal=event
+            if terminal is not None:
+                bar.stop();dialog.grab_release();dialog.destroy()
+                self._ffmpeg_installing=False
+                if terminal[0]=='done':
+                    self.recover_missing_ffmpeg_sync()
+                    self.schedule_sync()
+                    messagebox.showinfo(self.tr('FFmpeg installed'),
+                        self.tr('FFmpeg and ffprobe are now ready. Previously blocked synchronization attempts will be retried.'),parent=self.root)
+                elif not cancelled.is_set():
+                    messagebox.showerror(self.tr('FFmpeg installation failed'),terminal[1],parent=self.root)
+                return
+            self.root.after(150,poll)
+        self.root.after(150,poll)
+
+    def recover_missing_ffmpeg_sync(self):
+        """Reprocess only KO takes caused solely by missing tools."""
+        if not all(scene_sync.executables()):return 0
+        count=0
+        for _scene,_shot,_sub,container in core.iter_containers(self.catalog):
+            for take in container['takes']:
+                sync=take.get('sync') or {}
+                if sync.get('status') != 'KO':continue
+                error=str(sync.get('error','')).lower()
+                if ('ffmpeg' in error or 'ffprobe' in error) and any(
+                        part in error for part in ('required','not installed','not on path','not found')):
+                    take['sync']=None
+                    count+=1
+        if count:
+            self.changed()
+            self.refresh_scene_tree()
+        return count
+
     def shortcuts(self):
         self.root.bind_all('<Control-s>',lambda e:self.save())
         self.root.bind_all('<Control-o>',lambda e:self.open_project())
@@ -634,7 +789,8 @@ class SceneSlateApp:
     def session_data(self):
         selected=self.scene_tree.selection()
         if selected:self.last_tree_selection=selected[0]
-        return {'version':3, 'language':self.language, 'last_catalog':str(self.filepath) if self.filepath else None,
+        return {'version':4, 'language':self.language,
+                'ffmpeg_prompt_suppressed':self._ffmpeg_prompt_suppressed, 'last_catalog':str(self.filepath) if self.filepath else None,
                 'selected_scene_shot':self.last_tree_selection,
                 'selected_take':self.last_take_number,'active_side':self.active_side,
                 'only_empty':self.only_empty_var.get(),
@@ -695,6 +851,7 @@ class SceneSlateApp:
         self.update_title()
         self._restoring=False
         self.queue_save_session()
+        self.recover_missing_ffmpeg_sync()
         self.schedule_sync()
         if loaded:
             self.notice('Sessione ripristinata: '+(Path(self.filepath).name if self.filepath else 'bozza autosalvata'))
@@ -1364,6 +1521,7 @@ class SceneSlateApp:
 
     def schedule_sync(self, retry=False, selected=None):
         """Only enqueue immutable paths; all catalog/Tk mutations remain on UI thread."""
+        if not all(scene_sync.executables()):return
         for scene,shot,sub,container in core.iter_containers(self.catalog):
             for t in container['takes']:
                 if not t.get('video') or not t.get('audio'):continue
@@ -1505,6 +1663,7 @@ def main():
         return
     root=tk.Tk();app=SceneSlateApp(root)
     app.startup(args.project)
+    root.after(850,app.maybe_prompt_ffmpeg)
     root.mainloop()
 
 
