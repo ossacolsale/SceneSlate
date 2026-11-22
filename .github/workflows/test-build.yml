@@ -1,46 +1,21 @@
 name: Publish SceneSlate release
 
-# One temporary push hook cleans up artifacts left by the old workflow.
-# After cleanup this hook will be removed; normal commits will not run CI.
+# Normal pushes and pull requests do not trigger Actions.
+# Create and publish a GitHub Release to run cross-platform checks and build assets.
 on:
   release:
     types: [published]
-  push:
-    branches: [main]
-    paths:
-      - .github/workflows/test-build.yml
 
 permissions: {}
 
 concurrency:
-  group: sceneslate-${{ github.event_name }}-${{ github.ref }}
+  group: sceneslate-release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  cleanup-legacy-artifacts:
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    permissions:
-      actions: write
-      contents: read
-    steps:
-      - name: Delete previously uploaded Actions artifacts
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" --jq '.artifacts[].id' |
-            while read -r artifact_id; do
-              if [ -n "$artifact_id" ]; then
-                echo "Deleting Actions artifact $artifact_id"
-                gh api --method DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id"
-              fi
-            done
 
   build-and-publish:
     name: Release (${{ matrix.os }})
-    if: github.event_name == 'release'
     runs-on: ${{ matrix.os }}
     permissions:
       contents: write
