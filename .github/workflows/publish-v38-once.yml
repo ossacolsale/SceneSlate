@@ -1,0 +1,36 @@
+name: Publish SceneSlate v3.8.0 once
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-v38-once.yml
+permissions: {}
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create the public Release from tested source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view v3.8.0 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release v3.8.0 already exists"
+            exit 0
+          fi
+          cat > /tmp/notes.md <<'NOTES'
+          ## SceneSlate 3.8.0
+
+          - Sync Editor: offset Undo/Redo and stoppable, continuous listening to the end of the video.
+          - Review counter excludes intentionally one-sided takes.
+          - Combinable scene/shot/sub-shot filters for synchronization state and presence of takes, including **One-sided (SINGLE)** for video-only or audio-only takes in mixed groups.
+          - Inline destinations for linked scenes/shots/sub-shots.
+          - Collapsible, persistent descriptions/notes area.
+          - Strong-consensus waveform checks reduce unnecessary REVIEW without ignoring ambiguous audio.
+          - Windows standalone binary embeds the application icon.
+
+          Binaries for Windows x64 and Linux x64 will be attached directly by the Release-only workflow after platform tests and compilation. FFmpeg/ffprobe remain required for media analysis. Always verify critical synchronization by listening; Final Cut Pro 7 XML timings are frame-quantized.
+          NOTES
+          gh release create v3.8.0 --repo "$GITHUB_REPOSITORY" --target 5cd8613be1cadd9177f16d170d172b8a69f33f69 --title "SceneSlate 3.8.0" --notes-file /tmp/notes.md
