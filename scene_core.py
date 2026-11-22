@@ -239,10 +239,21 @@ def renumber_auto_takes(container):
     container['takes'].sort(key=lambda t: t['number'])
 
 
+def ensure_media_target(c, scene_number, shot_number, subshot_id=None):
+    """Once angles exist, only sub-shots may receive new media or take rows.
+
+    Legacy direct-shot takes are left untouched, so old catalogs remain readable.
+    """
+    shot = shot_for(c, scene_number, shot_number)
+    if shot is not None and subshot_id is None and shot.get('subshots'):
+        raise CatalogError('This shot has sub-shots. Select a sub-shot to attach media or add takes.')
+
+
 def add_take(c, scene_number, shot_number, number=None, subshot_id=None):
     container = container_for(c, scene_number, shot_number, subshot_id)
     if container is None:
         raise CatalogError('Seleziona uno shot o sotto-shot.')
+    ensure_media_target(c, scene_number, shot_number, subshot_id)
     used = {t['number'] for t in container['takes']}
     next_auto = max(used, default=0) + 1
     number = next_auto if number is None else positive_number(number)
@@ -305,6 +316,7 @@ def add_media(c,scene_number,shot_number,path,kind,quality='B',take_number=None,
     if kind not in ('video','audio'):raise CatalogError('Tipo file non valido.')
     sh=container_for(c,scene_number,shot_number,subshot_id)
     if sh is None:raise CatalogError('Seleziona uno shot o sotto-shot prima di associare file.')
+    ensure_media_target(c, scene_number, shot_number, subshot_id)
     info=media_info(path,quality)
     if any(t[kind] and identity(t[kind]['path'])==identity(info['path']) for t in sh['takes']):
         return (None,False)
@@ -571,6 +583,8 @@ def paste_snapshot(c, snapshot, scene_number, shot_number=None, subshot_id=None)
             _append_subshot(dst, data)
             return 'Sotto-shot aggiunto con tutti i ciak.'
         if kind == 'shot':
+            if data['takes'] and (dst.get('subshots') or data.get('subshots')):
+                raise CatalogError('This shot has sub-shots. Paste takes into a sub-shot instead.')
             _merge_takes(dst, data['takes'])
             for sub in data.get('subshots', []):_append_subshot(dst, sub)
             return 'Ciak e sotto-shot copiati nello shot.'
