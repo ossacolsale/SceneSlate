@@ -356,6 +356,10 @@ class SceneSlateApp:
         self.language_var = tk.StringVar(value=LANGUAGES[self.language])
         self._ui_labels = {}
         self._menu_labels = {}
+        self._link_tooltips = {}
+        self._hover_link_id = None
+        self._hover_link_after = None
+        self._hover_link_window = None
         self._session_after_id=None
         self._ready=False
         self._restoring=False
@@ -416,7 +420,7 @@ class SceneSlateApp:
         if not logo_path.is_file():
             return
         try:
-            self.logo_image = tk.PhotoImage(file=str(logo_path))
+            self.logo_image = tk.PhotoImage(master=self.root,file=str(logo_path))
             try:
                 self.root.iconphoto(True, self.logo_image)
             except tk.TclError:
@@ -519,6 +523,10 @@ class SceneSlateApp:
         self.scene_tree.bind('<Delete>',lambda e:self.delete_selected())
         self.scene_tree.bind('<ButtonRelease-1>',self.drop_scene_release,add='+')
         self.scene_tree.bind('<Button-3>',self.show_scene_context)
+        self.scene_tree.bind('<Motion>',self._on_link_hover,add='+')
+        self.scene_tree.bind('<Leave>',lambda event:self._hide_link_tooltip(),add='+')
+        self.scene_tree.bind('<ButtonPress-1>',lambda event:self._hide_link_tooltip(),add='+')
+        self.scene_tree.bind('<MouseWheel>',lambda event:self._hide_link_tooltip(),add='+')
         self.scene_context=tk.Menu(self.root,tearoff=False)
         self.scene_context.add_command(label='Copia contenuto  (Ctrl+C)',command=self.copy_selected)
         self.scene_context.add_command(label='Incolla qui  (Ctrl+V)',command=self.paste_selected)
@@ -693,25 +701,77 @@ class SceneSlateApp:
     def toggle_details(self):
         self.set_details_expanded(not self.details_expanded)
 
-    def _linked_suffix(self,n,h=None,u=None):
-        try: refs=core.linked_refs(self.catalog,n,h,u)
-        except core.CatalogError:return ''
-        if len(refs)<=1:return ''
+    def _linked_names(self,n,h=None,u=None):
+        """Full labels of every other member, never abbreviate or truncate."""
+        try:refs=core.linked_refs(self.catalog,n,h,u)
+        except core.CatalogError:return []
         current=core.node_ref(n,h,u)
         names=[]
         for ref in refs:
             if ref==current:continue
             parts=ref.split(':')
-            if parts[0]=='scene':name=f'S{parts[1]}'
-            elif parts[0]=='shot':name=f'S{parts[1]}/#{parts[2]}'
+            scene_number=int(parts[1])
+            shot_number=int(parts[2]) if len(parts)>2 else None
+            if parts[0]=='subshot':
+                sub=core.subshot_for(self.catalog,scene_number,shot_number,parts[3])
+                if not sub:continue
+                name=core.label(self.catalog,scene_number,shot_number,sub['name'])
             else:
-                sub=core.subshot_for(self.catalog,int(parts[1]),int(parts[2]),parts[3])
-                name=f'S{parts[1]}/#{parts[2]}/{sub["name"] if sub else "?"}'
+                name=core.label(self.catalog,scene_number,shot_number)
             names.append(name)
-        names.sort()
-        shown=', '.join(names[:2])
-        if len(names)>2:shown+=f' +{len(names)-2}'
-        return ' ⇄ '+shown
+        return sorted(names,key=str.casefold)
+
+    def _linked_suffix(self,n,h=None,u=None):
+        names=self._linked_names(n,h,u)
+        return '  ⇄ '+', '.join(names) if names else ''
+
+    def _remember_link_tooltip(self,item_id,n,h=None,u=None):
+        names=self._linked_names(n,h,u)
+        if names:self._link_tooltips[item_id]=self.tr('Linked with:')+'\n'+'\n'.join('• '+name for name in names)
+
+    def _hide_link_tooltip(self):
+        after_id=getattr(self,'_hover_link_after',None)
+        self._hover_link_after=None
+        if after_id is not None:
+            try:self.root.after_cancel(after_id)
+            except tk.TclError:pass
+        popup=getattr(self,'_hover_link_window',None)
+        self._hover_link_window=None
+        if popup is not None:
+            try:popup.destroy()
+            except tk.TclError:pass
+        self._hover_link_id=None
+
+    def _on_link_hover(self,event):
+        row=self.scene_tree.identify_row(event.y)
+        if row==self._hover_link_id:return
+        self._hide_link_tooltip()
+        if not row or row not in self._link_tooltips or self.dragging:return
+        self._hover_link_id=row
+        self._hover_link_after=self.root.after(500,
+            lambda r=row,x=event.x_root,y=event.y_root:self._show_link_tooltip(r,x,y))
+
+    def _show_link_tooltip(self,row,x,y):
+        self._hover_link_after=None
+        if row!=self._hover_link_id or row not in self._link_tooltips:return
+        if not self.scene_tree.exists(row):return
+        tip=tk.Toplevel(self.root)
+        tip.withdraw()
+        tip.overrideredirect(True)
+        tip.configure(bg='#425c76')
+        try:tip.attributes('-topmost',True)
+        except tk.TclError:pass
+        text=tk.Label(tip,text=self._link_tooltips[row],justify='left',anchor='w',
+                      bg='#142437',fg='#e6f3ff',padx=12,pady=9,
+                      wraplength=530,font=('Segoe UI',9))
+        text.pack(padx=1,pady=1)
+        tip.update_idletasks()
+        w=tip.winfo_reqwidth();h=tip.winfo_reqheight()
+        px=min(x+16,max(0,tip.winfo_screenwidth()-w-6))
+        py=min(y+18,max(0,tip.winfo_screenheight()-h-6))
+        tip.geometry(f'+{px}+{py}')
+        tip.deiconify()
+        self._hover_link_window=tip
 
     def localize_ui(self):
         """Relabel existing widgets in place: changing language never loses focus, media or edits."""
@@ -1200,6 +1260,8 @@ class SceneSlateApp:
         if select is None:
             ss=self.scene_tree.selection();select=ss[0] if ss else self.last_tree_selection
         self._updating=True
+        self._hide_link_tooltip()
+        self._link_tooltips.clear()
         self.scene_tree.delete(*self.scene_tree.get_children())
         for scene in self.catalog['scenes']:
             all_takes=[t for sh in scene['shots'] for t in self._all_takes(sh)]
@@ -1221,8 +1283,9 @@ class SceneSlateApp:
             tags=('empty_scene',) if empty and self.highlight_empty_var.get() else ('sync_bad',) if status in ('KO','REVIEW') else ('scene',)
             link_mark = self._linked_suffix(scene['number'])
             self.scene_tree.insert('','end',iid=sid,
-                text=self.tr(f"{sym}  {core.label(self.catalog,scene['number'])}{link_mark}    ({len(scene['shots'])} shot · {videos}V / {audios}A)"),
+                text=self.tr(f"{sym}  {core.label(self.catalog,scene['number'])}    ({len(scene['shots'])} shot · {videos}V / {audios}A)")+link_mark,
                 values=(self._sync_label(status),),tags=tags,open=True)
+            self._remember_link_tooltip(sid,scene['number'])
             for sh,subs in visible:
                 all_shot=self._all_takes(sh)
                 v=sum(bool(t.get('video')) for t in all_shot)
@@ -1235,8 +1298,9 @@ class SceneSlateApp:
                 padding=self.catalog['settings']['padding']
                 link_mark = self._linked_suffix(scene['number'],sh['number'])
                 self.scene_tree.insert(sid,'end',iid=tid,
-                    text=self.tr(f"{prefix}{self.catalog['settings']['shot_label']} {str(sh['number']).zfill(padding)}{link_mark}    {v} video / {a} audio"),
+                    text=self.tr(f"{prefix}{self.catalog['settings']['shot_label']} {str(sh['number']).zfill(padding)}    {v} video / {a} audio")+link_mark,
                     values=(self._sync_label(status),),tags=tag,open=True)
+                self._remember_link_tooltip(tid,scene['number'],sh['number'])
                 for sub in subs:
                     status=scene_sync.node_status(sub['takes'])
                     sub_empty=core.empty_subshot(sub)
@@ -1247,8 +1311,9 @@ class SceneSlateApp:
                     tag=('empty_subshot',) if sub_empty and self.highlight_empty_var.get() else ('sync_bad',) if status in ('KO','REVIEW') else ('subshot',)
                     link_mark = self._linked_suffix(scene['number'],sh['number'],sub['id'])
                     self.scene_tree.insert(tid,'end',iid=uid,
-                        text=f"{prefix}{sub['name']}{link_mark}    {vid}V / {aud}A", 
+                        text=f"{prefix}{sub['name']}    {vid}V / {aud}A"+link_mark,
                         values=(self._sync_label(status),),tags=tag)
+                    self._remember_link_tooltip(uid,scene['number'],sh['number'],sub['id'])
         if select and self.scene_tree.exists(select):
             self.scene_tree.selection_set(select);self.scene_tree.see(select)
         n_scene=sum(core.empty_scene(s) for s in self.catalog['scenes'])
@@ -1364,6 +1429,10 @@ class SceneSlateApp:
     def new_take(self):
         target=self.active_shot(quiet=True)
         if target is None:self.notice('Seleziona prima uno shot.');return
+        try:core.ensure_media_target(self.catalog,*target,self.selected_subshot_id())
+        except core.CatalogError as exc:
+            messagebox.showinfo(self.tr('Sub-shot required'),self.tr(str(exc)),parent=self.root)
+            return
         root=self.video_browser.path if self.active_side==VIDEO else self.audio_browser.path
         suffixes=core.VIDEO_EXT if self.active_side==VIDEO else core.AUDIO_EXT
         filespec=' '.join('*'+ext for ext in sorted(suffixes))
@@ -1538,6 +1607,10 @@ class SceneSlateApp:
         else:
             n,h,sub,selected_number=target
         if not paths:return
+        try:core.ensure_media_target(self.catalog,n,h,sub)
+        except core.CatalogError as exc:
+            messagebox.showinfo(self.tr('Sub-shot required'),self.tr(str(exc)),parent=self.root)
+            return
         good=[p for p in paths if Path(p).is_file()]
         if not good:return
         self.commit_notes();self.snapshot()
@@ -1932,6 +2005,7 @@ class SceneSlateApp:
             self._sync_timer=None
 
     def close(self):
+        self._hide_link_tooltip()
         if not self.ask_save_unsaved(on_close=True):return
         # Persist complete browsing state even if the last action was only scrolling.
         if self._session_after_id is not None:
@@ -1961,6 +2035,14 @@ def main():
         print(f'Exported {count} files for Resolve; {len(warnings)} warnings.')
         for w in warnings:print('WARNING:',w)
         return
+    if sys.platform == 'win32':
+        # Windows uses the explicit application ID for taskbar grouping and icon lookup.
+        # The executable itself carries sceneslate_logo.ico through PyInstaller --icon.
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('SceneSlate.Desktop.3')
+        except (AttributeError,OSError):
+            pass
     root=tk.Tk();app=SceneSlateApp(root)
     app.startup(args.project)
     root.after(850,app.maybe_prompt_ffmpeg)
