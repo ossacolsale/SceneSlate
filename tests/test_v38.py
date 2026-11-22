@@ -161,7 +161,8 @@ class Gui38Tests(unittest.TestCase):
             editor.play_active=True
             serial=editor.generation
             jobs=[]
-            with patch.object(editor,'_schedule_job',side_effect=lambda kind,fn:jobs.append((kind,fn))):
+            with patch('scene_sync.executables',return_value=('ffmpeg','ffprobe')), \
+                 patch.object(editor,'_schedule_job',side_effect=lambda kind,fn:jobs.append((kind,fn))):
                 editor._play_next(serial)
                 self.assertAlmostEqual(editor.play_cursor,20.)
                 editor._play_next(serial)
