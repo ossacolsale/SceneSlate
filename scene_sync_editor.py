@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from threading import Thread
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -27,6 +28,7 @@ WAVE_RATE = 2000
 PREVIEW_RATE = 16000
 MAX_WAVE_SECONDS = 240
 PREVIEW_SECONDS = 20  # streaming-style chunks; automatically advance to video end
+WAVE_WINDOW_SECONDS = 100  # bounded waveform cache, reloaded while scrolling
 
 
 def _ffmpeg_pcm(path, start, seconds, rate, fmt, ffmpeg):
@@ -120,6 +122,19 @@ class SyncEditor:
         self.play_timer=None
         self.play_cursor=0.
         self.play_chunk=PREVIEW_SECONDS
+        self.playhead_seconds=0.
+        self.play_chunk_start=0.
+        self.play_chunk_length=0.
+        self.play_wall_started=None
+        self.cursor_timer=None
+        self._programmatic_seek=False
+        self.wave_camera_start=0.
+        self.wave_external_start=0.
+        self.wave_camera_range_end=0.
+        self.wave_external_range_end=0.
+        self.external_duration=0.
+        self.wave_loading=False
+        self.wave_job_token=0
         self.undo_offsets=[]
         self.redo_offsets=[]
         self.wave_camera=None;self.wave_external=None
@@ -163,6 +178,8 @@ class SyncEditor:
         self.seek.pack(side='left',fill='x',expand=True,padx=8)
         self.seek_label=tk.StringVar(value='0.0 s')
         ttk.Label(seek,textvariable=self.seek_label,width=12).pack(side='right')
+        self.playhead_label=tk.StringVar(value='▶ 0.00 s')
+        ttk.Label(seek,textvariable=self.playhead_label,width=13).pack(side='right',padx=(4,8))
         line=ttk.Frame(frame);line.pack(fill='x',pady=(9,2))
         ttk.Label(line,text=self.tr('Visible interval:')).pack(side='left')
         self.zoom=tk.StringVar(value='10 s')
@@ -222,10 +239,88 @@ class SyncEditor:
         ainfo=scene_sync.media_probe(self.audio,ffprobe)
         if not vinfo['audio'] or not ainfo['audio']:
             raise RuntimeError('Both files must contain an audio stream')
-        seconds=min(MAX_WAVE_SECONDS,vinfo['duration'])
+        seconds=min(WAVE_WINDOW_SECONDS,float(vinfo['duration']))
         camera=_ffmpeg_pcm(self.video,0,seconds,WAVE_RATE,'f32le',ffmpeg)
-        recorder=_ffmpeg_pcm(self.audio,0,min(MAX_WAVE_SECONDS,ainfo['duration']),WAVE_RATE,'f32le',ffmpeg)
-        return (camera,recorder,seconds,float(vinfo['duration']))
+        audio_start=max(0.,self.offset)
+        audio_seconds=min(WAVE_WINDOW_SECONDS,max(0.,float(ainfo['duration'])-audio_start))
+        recorder=(_ffmpeg_pcm(self.audio,audio_start,audio_seconds,WAVE_RATE,'f32le',ffmpeg)
+                  if audio_seconds>0 else array.array('f'))
+        return (camera,recorder,seconds,float(vinfo['duration']),
+                float(ainfo['duration']),audio_start)
+
+    def _request_wave_window(self):
+        """Decode only a small surrounding window; never block Tk or load entire feature films."""
+        if self.closed or self.loading or self.wave_loading or self.wave_camera is None:
+            return
+        left=self.position
+        right=min(self.full_duration,self.position+self.view_seconds)
+        source_left=left+self.offset
+        source_right=right+self.offset
+        # Missing source samples outside a real audio stream are intentional silence.
+        audio_begin=max(0.,source_left)
+        audio_end=min(self.external_duration,source_right)
+        cam_ok=(left>=self.wave_camera_start and right<=self.wave_camera_range_end-2
+                or right>=self.full_duration-0.001 and right<=self.wave_camera_range_end+0.001)
+        aud_ok=(audio_end<=audio_begin or
+                audio_begin>=self.wave_external_start and audio_end<=self.wave_external_range_end-2
+                or audio_end>=self.external_duration-0.001 and
+                audio_begin>=self.wave_external_start and audio_end<=self.wave_external_range_end+0.001)
+        if cam_ok and aud_ok:return
+        ffmpeg,_=scene_sync.executables()
+        if not ffmpeg:return
+        cam_start=max(0.,math.floor(left)-10.)
+        cam_secs=min(WAVE_WINDOW_SECONDS,max(0.,self.full_duration-cam_start))
+        aud_start=max(0.,cam_start+self.offset)
+        aud_secs=min(WAVE_WINDOW_SECONDS,max(0.,self.external_duration-aud_start))
+        token=self.wave_job_token=self.wave_job_token+1
+        self.wave_loading=True
+        def work():
+            camera=(_ffmpeg_pcm(self.video,cam_start,cam_secs,WAVE_RATE,'f32le',ffmpeg)
+                    if cam_secs>0 else array.array('f'))
+            audio=(_ffmpeg_pcm(self.audio,aud_start,aud_secs,WAVE_RATE,'f32le',ffmpeg)
+                   if aud_secs>0 else array.array('f'))
+            return token,camera,audio,cam_start,cam_start+cam_secs,aud_start,aud_start+aud_secs
+        self._schedule_job('wave',work)
+
+    def _show_playhead(self):
+        if self.closed or not self.canvas.winfo_exists():return
+        self.canvas.delete('playhead')
+        t=self.playhead_seconds
+        if not self.position <= t <= self.position+self.view_seconds:return
+        width=max(250,self.canvas.winfo_width())
+        span=max(1,width-80)
+        x=68+(t-self.position)*span/self.view_seconds
+        self.canvas.create_line(x,10,x,max(180,self.canvas.winfo_height())-18,
+              fill='#f7d16c',width=2,tags=('playhead',))
+        label=f'{t:.2f} s'
+        self.canvas.create_text(min(width-50,max(95,x+6)),14,text=label,
+              fill='#ffe5a3',anchor='w',font=('Segoe UI',9,'bold'),tags=('playhead',))
+        self.canvas.tag_raise('playhead')
+
+    def _tick_playhead(self):
+        self.cursor_timer=None
+        if self.closed or not self.play_active:return
+        if self.play_wall_started is not None:
+            elapsed=max(0.,time.monotonic()-self.play_wall_started)
+            self.playhead_seconds=min(self.full_duration,
+                self.play_chunk_start+min(self.play_chunk_length,elapsed))
+        self.playhead_label.set(f'▶ {self.playhead_seconds:.2f} s')
+        old=self.position
+        if self.playhead_seconds > self.position+self.view_seconds*.70:
+            self.position=min(max(0.,self.full_duration-self.view_seconds),
+                              max(0.,self.playhead_seconds-self.view_seconds*.70))
+        if self.playhead_seconds < self.position:
+            self.position=max(0.,self.playhead_seconds-self.view_seconds*.25)
+        if abs(self.position-old)>.00001:
+            self._programmatic_seek=True
+            try:self.seek_value.set(self.position)
+            finally:self._programmatic_seek=False
+            self.seek_label.set(f'{self.position:.2f} s')
+            self._request_wave_window()
+            self.draw()
+        else:
+            self._show_playhead()
+        self.cursor_timer=self.win.after(65,self._tick_playhead)
 
     def _poll(self):
         if self.closed:return
@@ -235,12 +330,28 @@ class SyncEditor:
                 if kind=='load':
                     self.loading=False
                     if ok:
-                        self.wave_camera,self.wave_external,self.wave_duration,self.full_duration=value
+                        if len(value)==6:
+                            self.wave_camera,self.wave_external,self.wave_duration,self.full_duration,self.external_duration,self.wave_external_start=value
+                        else:
+                            self.wave_camera,self.wave_external,self.wave_duration=value[:3]
+                            self.full_duration=value[3] if len(value)>3 else self.wave_duration
+                            self.external_duration=self.full_duration
+                            self.wave_external_start=0.
+                        self.wave_camera_start=0.
+                        self.wave_camera_range_end=self.wave_duration
+                        self.wave_external_range_end=self.wave_external_start+min(WAVE_WINDOW_SECONDS,max(0.,self.external_duration-self.wave_external_start))
                         self.duration=self.full_duration
                         self.seek.configure(to=max(0.,self.duration-self.view_seconds))
                         self.info.set(self.tr('Waveforms ready. Drag recorder waveform or nudge the offset.'))
                         self.draw()
                     else:self.info.set(self.tr('Waveform loading failed:')+' '+value)
+                elif kind=='wave':
+                    self.wave_loading=False
+                    if ok and value[0]==self.wave_job_token:
+                        _,self.wave_camera,self.wave_external,self.wave_camera_start,self.wave_camera_range_end,self.wave_external_start,self.wave_external_range_end=value
+                        self.draw()
+                    elif not ok:
+                        self.info.set(self.tr('Waveform loading failed:')+' '+str(value))
                 elif kind=='preview':
                     if not ok:
                         self.info.set(self.tr('Preview failed:')+' '+str(value))
@@ -250,6 +361,10 @@ class SyncEditor:
                     try:
                         self._stop_output()
                         self.preview_process=_play_wav(path)
+                        self.play_chunk_start=self.play_cursor-seconds
+                        self.play_chunk_length=seconds
+                        self.play_wall_started=time.monotonic()
+                        self.playhead_seconds=self.play_chunk_start
                         self.info.set(self.tr('Playing synchronized audio. Press Stop to interrupt.'))
                         self.play_timer=self.win.after(max(1,int(seconds*1000)),
                                            lambda token=serial:self._play_next(token))
@@ -263,10 +378,16 @@ class SyncEditor:
         self.view_seconds=float(self.zoom.get().split()[0])
         self.seek.configure(to=max(0.,self.duration-self.view_seconds))
         self.position=min(self.position,max(0.,self.duration-self.view_seconds))
-        self.seek_value.set(self.position);self.draw()
+        self.seek_value.set(self.position);self._request_wave_window();self.draw()
 
     def _seek_changed(self,value):
-        self.position=float(value);self.seek_label.set(f'{self.position:.2f} s');self.draw()
+        if self._programmatic_seek:return
+        if self.play_active:self.stop()
+        self.position=float(value)
+        self.playhead_seconds=self.position
+        self.playhead_label.set(f'▶ {self.playhead_seconds:.2f} s')
+        self.seek_label.set(f'{self.position:.2f} s')
+        self._request_wave_window();self.draw()
 
     def _parse_offset(self,event=None):
         try:
@@ -295,6 +416,7 @@ class SyncEditor:
             self.offset=new
         self.offset_var.set(f'{self.offset:+.3f}')
         self._refresh_history_buttons()
+        self._request_wave_window()
         self.draw()
 
     def undo(self):
@@ -319,8 +441,11 @@ class SyncEditor:
         if self.drag_start is None:
             width=max(1,self.canvas.winfo_width()-80)
             clicked=self.position+max(0,min(1,(event.x-68)/width))*self.view_seconds
+            if self.play_active:self.stop()
+            self.playhead_seconds=clicked
+            self.playhead_label.set(f'▶ {clicked:.2f} s')
             self.position=max(0,min(self.duration-self.view_seconds,clicked-self.view_seconds/2))
-            self.seek_value.set(self.position);self.draw()
+            self.seek_value.set(self.position);self._request_wave_window();self.draw()
 
     def _drag_move(self,event):
         if not getattr(self,'drag_start',None):return
@@ -353,19 +478,20 @@ class SyncEditor:
             x=startx+span*n/5
             canvas.create_line(x,12,x,height-15,fill='#263951',dash=(2,5))
             canvas.create_text(x,height-7,text=f'{self.position+self.view_seconds*n/5:.2f}',fill='#b8cae2',font=('Segoe UI',8))
-        if not self.wave_camera or not self.wave_external:
+        if self.wave_camera is None or self.wave_external is None:
             canvas.create_text(width/2,height/2,text=self.tr('Loading waveforms…'),fill='#8fadc8')
+            self._show_playhead()
             return
-        for idx,(samples,shift,color) in enumerate(((self.wave_camera,0.,'#6db5e8'),
-                                                       (self.wave_external,self.offset,'#e6ba78'))):
+        for idx,(samples,shift,color,wave_start) in enumerate(((self.wave_camera,0.,'#6db5e8',self.wave_camera_start),
+                                                       (self.wave_external,self.offset,'#e6ba78',self.wave_external_start))):
             mid=centers[idx];total=len(samples)
             amps=[]
             for pixel in range(span):
                 video_t=self.position+(pixel+.5)*self.view_seconds/span
                 source_t=video_t+shift
-                k0=max(0,int((source_t-self.view_seconds/(span*2))*WAVE_RATE))
-                k1=min(total,int((source_t+self.view_seconds/(span*2))*WAVE_RATE)+1)
-                if source_t<0 or k0>=total or k1<=k0:amps.append((0.,0.));continue
+                k0=max(0,int((source_t-wave_start-self.view_seconds/(span*2))*WAVE_RATE))
+                k1=min(total,int((source_t-wave_start+self.view_seconds/(span*2))*WAVE_RATE)+1)
+                if source_t<wave_start or k0>=total or k1<=k0:amps.append((0.,0.));continue
                 window=samples[k0:k1]
                 amps.append((min(window),max(window)))
             peak=max((max(abs(a),abs(b)) for a,b in amps),default=1.)
@@ -374,6 +500,7 @@ class SyncEditor:
                 if low==high==0:continue
                 x=startx+pixel
                 canvas.create_line(x,mid-high*gain,x,mid-low*gain,fill=color)
+        self._show_playhead()
 
     def _stop_output(self):
         if sys.platform=='win32':
@@ -390,7 +517,12 @@ class SyncEditor:
 
     def stop(self):
         self.play_active=False
+        self.play_wall_started=None
         self.generation+=1   # Discard in-flight chunk rendering.
+        if self.cursor_timer is not None:
+            try:self.win.after_cancel(self.cursor_timer)
+            except tk.TclError:pass
+            self.cursor_timer=None
         if self.play_timer is not None:
             try:self.win.after_cancel(self.play_timer)
             except tk.TclError:pass
@@ -401,6 +533,8 @@ class SyncEditor:
     def _play_next(self,serial):
         self.play_timer=None
         if self.closed or not self.play_active or serial!=self.generation:return
+        self.play_wall_started=None
+        self.playhead_seconds=min(self.full_duration,self.play_cursor)
         remaining=self.full_duration-self.play_cursor
         if remaining<=.002:
             self.stop()
@@ -431,6 +565,8 @@ class SyncEditor:
         self.stop()
         self.play_active=True
         self.play_cursor=min(self.position,max(0.,self.full_duration))
+        self.playhead_seconds=self.play_cursor
+        self._tick_playhead()
         self._play_next(self.generation)
 
     def confirm(self):
