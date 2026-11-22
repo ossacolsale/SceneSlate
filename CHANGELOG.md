@@ -1,5 +1,17 @@
 # Changelog
 
+## 3.3 — Waveform sync and non-destructive review timelines
+
+- Background audio synchronization for explicitly paired files using embedded camera audio versus external sound via FFmpeg, without modifying media.
+- Per-take waveform offset, confidence score, fingerprint, diagnostics, and conservative OK / REVIEW / KO / PENDING / SINGLE statuses.
+- Sync status columns for takes and the scene / shot / sub-shot hierarchy, with an unsynced-only filter and per-take retry/details controls.
+- Four selectable exports: existing CSV metadata/reports, individual take FCP7 XML sequences, shot review sequences, and scene review sequences.
+- Audio is included in XML only when its waveform match is confidently OK; otherwise no invented alignment and a clear report warning.
+- Catalog schema 5; compatibility with schema 1–4 and upgrade backups.
+- Regression tests for waveform lag direction, silence/unrelated audio rejection, fallback without NumPy, real FFmpeg media, XML in/out points, migration and GUI statuses.
+
+# Changelog
+
 ## 3.2 — Bilingual interface and English output naming
 
 - Added runtime **English / Italiano** selection, with English on first launch.

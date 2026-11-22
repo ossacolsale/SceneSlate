@@ -1,4 +1,4 @@
-"""SceneSlate 3.2 catalog engine: scene/shot/subshot/take with video/audio pairs.
+"""SceneSlate 3.3 catalog engine: scene/shot/subshot/take with video/audio pairs.
 
 No media file is modified. This module has no GUI dependencies.
 """
@@ -16,7 +16,9 @@ from datetime import datetime, timezone
 from collections import defaultdict
 from uuid import uuid4
 
-VERSION = 4
+import scene_sync
+
+VERSION = 5
 QUALITIES = {'B': 'Buona', 'R': 'Riserva', 'S': 'Scarto'}
 VIDEO_EXT = {'.mov','.mp4','.mxf','.avi','.mkv','.mts','.m2ts','.mpg','.mpeg','.wmv','.webm','.r3d','.braw','.mp4v','.m4v'}
 AUDIO_EXT = {'.wav','.bwf','.mp3','.flac','.aif','.aiff','.m4a','.ogg','.wma','.caf'}
@@ -27,7 +29,7 @@ class CatalogError(ValueError):
 
 def new_catalog():
     return {'version': VERSION, 'name': 'New catalog',
-            'settings': {'scene_label': 'Scene', 'shot_label': 'Shot', 'separator': ' / ', 'padding': 0},
+            'settings': {'scene_label': 'Scene', 'shot_label': 'Shot', 'separator': ' / ', 'padding': 0, 'timeline_fps':25.0},
             'video_root': '', 'audio_root': '', 'scenes': []}
 
 
@@ -249,7 +251,7 @@ def add_take(c, scene_number, shot_number, number=None, subshot_id=None):
     order = max((t.get('order', 0) for t in container['takes']), default=0) + 1
     take = {'number': number, 'manual_number': number != next_auto,
             'order': order, 'video': None, 'audio': None,
-            'description': '', 'annotation': '', 'notes': ''}
+            'description': '', 'annotation': '', 'notes': '', 'sync': None}
     container['takes'].append(take)
     container['takes'].sort(key=lambda t: t['number'])
     return take
@@ -302,6 +304,7 @@ def add_media(c,scene_number,shot_number,path,kind,quality='B',take_number=None,
         raise CatalogError(f'Ciak {target["number"]}: lato {kind} già occupato. Usa un nuovo ciak oppure rimuovi il lato.')
     if target is None:target=add_take(c,scene_number,shot_number,subshot_id=subshot_id)
     target[kind]=info
+    target['sync']=None  # Pair changed: a prior alignment is no longer trustworthy.
     return (target,True)
 
 
@@ -310,6 +313,7 @@ def remove_media(c,scene_number,shot_number,take_number,kind,subshot_id=None):
     if take is None:raise CatalogError('Ciak non trovato.')
     if kind not in ('video','audio'):raise CatalogError('Lato non valido.')
     take[kind]=None
+    take['sync']=None
     sh=container_for(c,scene_number,shot_number,subshot_id)
     if not take['video'] and not take['audio']:sh['takes'].remove(take)
     # No implicit renumbering after removing a media reference.
@@ -349,6 +353,9 @@ def validate(c):
             orders.add(order)
             if not isinstance(take.get('description'), str) or not isinstance(take.get('annotation'), str):
                 raise CatalogError(f'Descrizione/annotazione non valida nel ciak {prefix}/{tn}')
+            sync=take.get('sync')
+            if sync is not None and (not isinstance(sync,dict) or sync.get('status') not in scene_sync.SYNC_STATUSES):
+                raise CatalogError(f'Invalid sync record in {prefix}/{tn}')
             if type(take.get('manual_number')) is not bool:
                 raise CatalogError('Flag ciak manuale non valido.')
             for kind in ('video', 'audio'):
@@ -387,6 +394,8 @@ def validate(c):
         raise CatalogError('Convenzione non valida.')
     if not isinstance(st.get('padding'), int) or st['padding'] not in range(7):
         raise CatalogError('Padding non valido (0–6).')
+    if float(st.get('timeline_fps',25)) not in (23.976,24,25,29.97,30,50,59.94,60):
+        raise CatalogError('Unsupported XML timeline frame rate')
     return True
 
 
@@ -435,6 +444,15 @@ def migrate_legacy(data):
                         take.setdefault('description', '')
                         take.setdefault('annotation', take.get('notes', ''))
                         take.setdefault('order', index)
+        data['version'] = 4
+    if data.get('version') == 4:
+        data = copy.deepcopy(data)
+        for scene in data.get('scenes', []):
+            for shot in scene.get('shots', []):
+                for container in [shot] + shot.get('subshots', []):
+                    for take in container.get('takes', []):
+                        take.setdefault('sync', None)
+        data.setdefault('settings', {}).setdefault('timeline_fps', 25.0)
         data['version'] = VERSION
     return data
 
@@ -565,7 +583,7 @@ def save_catalog(c,filename):
         try:
             with dest.open('r',encoding='utf-8') as old_file:
                 old_version=json.load(old_file).get('version')
-            if old_version in (1, 2, 3):
+            if old_version in (1, 2, 3, 4):
                 backup=dest.with_name(dest.name+f'.v{old_version}.bak')
                 if not backup.exists():shutil.copy2(dest,backup)
         except (OSError,ValueError,AttributeError):
@@ -637,7 +655,7 @@ def sort_directory_entries(entries,mode='name_asc'):
 def export_catalog_csv(c, destination):
     fields = ['Scene','Shot','Sub-shot','Take','Manual number','Label','Video','Video quality','Video path',
               'Video exists','Audio','Audio quality','Audio path','Audio exists',
-              'Scene description','Shot description','Sub-shot description','Take description','Take annotation','Scene notes (legacy)','Shot notes (legacy)','Sub-shot notes (legacy)','Take notes (legacy)']
+              'Scene description','Shot description','Sub-shot description','Take description','Take annotation','Sync status','Sync offset (s)','Sync score','Sync method','Sync error','Scene notes (legacy)','Shot notes (legacy)','Sub-shot notes (legacy)','Take notes (legacy)']
     with open(destination, 'w', encoding='utf-8-sig', newline='') as f:
         w = csv.DictWriter(f, fieldnames=fields, delimiter=';');w.writeheader()
         for s, sh, sub, container in iter_containers(c):
@@ -650,12 +668,15 @@ def export_catalog_csv(c, destination):
                     Path(a['path']).name if a else '',a['quality'] if a else '',a['path'] if a else '',
                     'YES' if a and Path(a['path']).is_file() else ('NO' if a else ''),
                     s.get('description',''),sh.get('description',''),sub.get('description','') if sub else '',
-                    t.get('description',''),t.get('annotation',''),s.get('notes',''),sh.get('notes',''),
+                    t.get('description',''),t.get('annotation',''),scene_sync.effective_status(t),
+                    (t.get('sync') or {}).get('offset_seconds',''),(t.get('sync') or {}).get('score',''),
+                    (t.get('sync') or {}).get('method',''),(t.get('sync') or {}).get('error',''),
+                    s.get('notes',''),sh.get('notes',''),
                     sub.get('notes','') if sub else '',t.get('notes','')])))
 
 
 def export_shots_csv(c, destination):
-    fields=['Scene','Shot','Sub-shot','Label','Takes (video[B/R/S] + audio[B/R/S])','Incomplete takes','Scene description','Shot description','Sub-shot description']
+    fields=['Scene','Shot','Sub-shot','Label','Takes (video[B/R/S] + audio[B/R/S])','Incomplete takes','Sync status','Scene description','Shot description','Sub-shot description']
     with open(destination,'w',encoding='utf-8-sig',newline='') as f:
         w=csv.writer(f,delimiter=';');w.writerow(fields)
         for s,sh,sub,container in iter_containers(c):
@@ -665,7 +686,7 @@ def export_shots_csv(c, destination):
             incomplete=sum(bool(t.get('video'))!=bool(t.get('audio')) for t in container['takes'])
             w.writerow([s['number'],sh['number'],sub['name'] if sub else '',
                 label(c,s['number'],sh['number'],sub['name'] if sub else None),desc,incomplete,
-                s.get('description',''),sh.get('description',''),sub.get('description','') if sub else ''])
+                scene_sync.node_status(container['takes']),s.get('description',''),sh.get('description',''),sub.get('description','') if sub else ''])
 
 
 def resolve_rows(c):
@@ -710,13 +731,32 @@ def export_resolve_csv(c,destination):
     return len(rows),warnings
 
 
-def export_all(c,directory):
+def export_all(c,directory,modes=('csv',),fps=None):
+    """Export CSV plus optional XMEML sequences. Return old (rows, warnings) API."""
+    modes=set(modes)
+    valid={'csv','take','shot','scene'}
+    if not modes.issubset(valid):raise CatalogError('Unsupported export mode: '+str(modes-valid))
     dest=Path(directory);dest.mkdir(parents=True,exist_ok=True)
-    export_catalog_csv(c,dest/'full_catalog.csv')
-    export_shots_csv(c,dest/'shot_summary.csv')
-    count,warnings=export_resolve_csv(c,dest/'resolve_metadata.csv')
+    count=0;warnings=[]
+    if 'csv' in modes:
+        export_catalog_csv(c,dest/'full_catalog.csv')
+        export_shots_csv(c,dest/'shot_summary.csv')
+        count,warnings=export_resolve_csv(c,dest/'resolve_metadata.csv')
+    xml_modes=modes & {'take','shot','scene'}
+    counts={}
+    if xml_modes:
+        import scene_xml
+        counts,xml_warnings=scene_xml.export_timelines(c,dest,modes=xml_modes,
+            fps=fps if fps is not None else c.get('settings',{}).get('timeline_fps',25))
+        warnings.extend(xml_warnings)
     with (dest/'export_report.txt').open('w',encoding='utf-8') as f:
-        f.write(f'SceneSlate 3.2 - export report\nResolve rows: {count}\n\n')
+        f.write(f'SceneSlate 3.3 - export report\nResolve metadata rows: {count}\n')
+        f.write(f'Export modes: {", ".join(sorted(modes))}\n')
+        for mode,n in counts.items():f.write(f'XML {mode} timelines: {n}\n')
+        f.write('\n')
         f.write('\n'.join(warnings) if warnings else 'No ambiguities detected.\n')
-        f.write('\n\nNOTE: catalog pairing only; NO actual timecode/audio synchronization.\n')
+        f.write('\n\nNOTE: only OK waveform matches export paired external audio. '
+                'Unverified audio is omitted from the XML, not silently aligned. '
+                'XML is an editable timeline, not a native Media Pool sync clip. '
+                'Original media remains unmodified.\n')
     return count,warnings

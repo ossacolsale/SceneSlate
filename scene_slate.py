@@ -35,6 +35,8 @@ simpledialog = _TranslatedDialog(_simpledialog)
 
 import scene_core as core
 import scene_session as session
+import scene_sync
+from scene_sync_worker import SyncWorker
 
 APP_NAME = 'SceneSlate'
 VIDEO = 'video'
@@ -366,6 +368,9 @@ class SceneSlateApp:
         self.take_annotation_var=tk.StringVar()
         self._editing_node_target=None
         self._editing_take_target=None
+        self.only_unsynced_var=tk.BooleanVar(value=False)
+        self._sync_worker=SyncWorker()
+        self._sync_timer=None
         self.only_empty_var=tk.BooleanVar(value=False)
         self.highlight_empty_var=tk.BooleanVar(value=True)
         self._updating=False
@@ -375,11 +380,13 @@ class SceneSlateApp:
         self.shortcuts()
         self.refresh_scene_tree(select=None)
         self.root.protocol('WM_DELETE_WINDOW',self.close)
+        self.root.bind('<Destroy>',self.on_root_destroy,add='+')
         self.root.minsize(1140,720)
         self.root.geometry('1550x890')
         self.root.title(APP_NAME+' — '+self.tr('Nuovo catalogo'))
         self.root.bind('<Configure>',lambda e:self.queue_save_session() if e.widget is self.root else None)
         self._ready=True
+        self._sync_timer=self.root.after(400,self.poll_sync)
 
     def make_styles(self):
         self.root.configure(bg='#121a28')
@@ -440,7 +447,11 @@ class SceneSlateApp:
         for text,action,sty in [('+ Scena',self.add_scene,'Primary.TButton'),('+ Shot',self.add_shot,'Primary.TButton'),('+ Sotto-shot',self.add_subshot,'Primary.TButton'),('− Elimina',self.delete_selected,'Danger.TButton'),('Rinumera…',self.renumber,'TButton')]:
             ttk.Button(controls,text=text,command=action,style=sty).pack(side='left',padx=(0,5))
         scene_wrap=ttk.Frame(left,style='Panel.TFrame');scene_wrap.pack(fill='both',expand=True)
-        self.scene_tree=ttk.Treeview(scene_wrap,show='tree',selectmode='browse',height=5)
+        self.scene_tree=ttk.Treeview(scene_wrap,columns=('sync',),show='tree headings',selectmode='browse',height=5)
+        self.scene_tree.heading('#0',text='Scene / shot / sub-shot')
+        self.scene_tree.heading('sync',text='SYNC')
+        self.scene_tree.column('#0',width=380,minwidth=200,stretch=True)
+        self.scene_tree.column('sync',width=95,minwidth=78,stretch=False,anchor='center')
         self.scene_tree.pack(side='left',fill='both',expand=True)
         sc=ttk.Scrollbar(scene_wrap,command=self.scene_tree.yview);sc.pack(side='right',fill='y')
         self.scene_tree.config(yscrollcommand=sc.set)
@@ -450,6 +461,7 @@ class SceneSlateApp:
         self.scene_tree.tag_configure('empty_subshot',foreground='#ffce78')
         self.scene_tree.tag_configure('empty_scene',foreground='#ffbd73')
         self.scene_tree.tag_configure('empty_shot',foreground='#ffce78')
+        self.scene_tree.tag_configure('sync_bad',foreground='#ffaf78')
         self.scene_tree.bind('<<TreeviewSelect>>',self.on_scene_select)
         self.scene_tree.bind('<Double-1>',lambda e:self.renumber())
         self.scene_tree.bind('<Delete>',lambda e:self.delete_selected())
@@ -470,26 +482,31 @@ class SceneSlateApp:
                         command=self.scene_filter_changed).pack(side='left',padx=(0,12))
         ttk.Checkbutton(filter_row,text='Evidenzia vuoti',variable=self.highlight_empty_var,
                         command=self.scene_filter_changed).pack(side='left')
+        ttk.Checkbutton(filter_row,text='Solo non sincronizzati',variable=self.only_unsynced_var,
+                        command=self.scene_filter_changed).pack(side='left',padx=(10,0))
         self.scene_count_var=tk.StringVar(value='')
         ttk.Label(left,textvariable=self.scene_count_var,style='Muted.TLabel').pack(anchor='w',pady=(3,0))
 
         detail_head=ttk.Frame(left,style='Panel.TFrame');detail_head.pack(fill='x',pady=(12,4))
         self.detail_label=ttk.Label(detail_head,text='CIAK E ABBINAMENTI',style='Section.TLabel');self.detail_label.pack(side='left')
         ttk.Button(detail_head,text='+ Ciak',command=self.new_take).pack(side='right',padx=(4,0))
+        ttk.Button(detail_head,text='↻ Sync',command=self.retry_sync).pack(side='right',padx=(4,0))
+        ttk.Button(detail_head,text='Sync details',command=self.sync_details).pack(side='right',padx=(4,0))
         ttk.Button(detail_head,text='N° ciak…',command=self.edit_take_number).pack(side='right',padx=(4,0))
         ttk.Button(detail_head,text='↻ Auto',command=self.reset_take_number).pack(side='right',padx=(4,0))
         ttk.Button(detail_head,text='− Ciak',command=self.delete_take).pack(side='right',padx=(4,0))
         media_wrap=ttk.Frame(left,style='Panel.TFrame');media_wrap.pack(fill='both',expand=True)
-        self.media_tree=ttk.Treeview(media_wrap,columns=('take','video','vq','audio','aq'),
+        self.media_tree=ttk.Treeview(media_wrap,columns=('take','video','vq','audio','aq','sync'),
                                      show='headings',selectmode='browse',height=6)
         for col,title,width,minimum in [('take','Ciak',54,43),('video','VIDEO',165,84),
-                                        ('vq','B/R/S',57,48),('audio','AUDIO',165,84),('aq','B/R/S',57,48)]:
+                                        ('vq','B/R/S',57,48),('audio','AUDIO',165,84),('aq','B/R/S',57,48),('sync','SYNC',91,75)]:
             self.media_tree.heading(col,text=title)
             self.media_tree.column(col,width=width,minwidth=minimum,stretch=col in ('video','audio'),
-                                   anchor='center' if col in ('take','vq','aq') else 'w')
+                                   anchor='center' if col in ('take','vq','aq','sync') else 'w')
         self.media_tree.tag_configure('paired',foreground='#e4f2ff')
         self.media_tree.tag_configure('unpaired',foreground='#ffce78')
         self.media_tree.tag_configure('missing',foreground='#f49b99')
+        self.media_tree.tag_configure('sync_bad',foreground='#ffaf78')
         self.media_tree.pack(side='left',fill='both',expand=True)
         ms=ttk.Scrollbar(media_wrap,command=self.media_tree.yview);ms.pack(side='right',fill='y')
         self.media_tree.configure(yscrollcommand=ms.set)
@@ -575,6 +592,9 @@ class SceneSlateApp:
         self.media_tree.heading('take',text=self.tr('Ciak'))
         self.media_tree.heading('vq',text='B/R/S')
         self.media_tree.heading('aq',text='B/R/S')
+        self.media_tree.heading('sync',text='SYNC')
+        self.scene_tree.heading('#0',text=self.tr('Scene / shot / sub-shot'))
+        self.scene_tree.heading('sync',text='SYNC')
         self.scene_count_var.set(self.tr(self.scene_count_var.get()))
         self.side_var.set(self.tr('Lato attivo: ')+self.active_side.upper())
         self.status_var.set(self.tr(self._last_notice_raw))
@@ -618,6 +638,7 @@ class SceneSlateApp:
                 'selected_scene_shot':self.last_tree_selection,
                 'selected_take':self.last_take_number,'active_side':self.active_side,
                 'only_empty':self.only_empty_var.get(),
+                'only_unsynced':self.only_unsynced_var.get(),
                 'highlight_empty':self.highlight_empty_var.get(),
                 'video':self.video_browser.get_state(),
                 'audio':self.audio_browser.get_state(),
@@ -658,6 +679,7 @@ class SceneSlateApp:
                     loaded=True
                 except (OSError,ValueError,KeyError,TypeError):pass
         self.only_empty_var.set(bool(state.get('only_empty',False)))
+        self.only_unsynced_var.set(bool(state.get('only_unsynced',False)))
         self.highlight_empty_var.set(bool(state.get('highlight_empty',True)))
         geometry=state.get('geometry','')
         if isinstance(geometry,str) and geometry:
@@ -673,10 +695,14 @@ class SceneSlateApp:
         self.update_title()
         self._restoring=False
         self.queue_save_session()
+        self.schedule_sync()
         if loaded:
             self.notice('Sessione ripristinata: '+(Path(self.filepath).name if self.filepath else 'bozza autosalvata'))
 
     def scene_filter_changed(self):
+        if self.only_unsynced_var.get() and self.only_empty_var.get():
+            # These filters describe competing workflows. Unsynced takes take precedence.
+            self.only_empty_var.set(False)
         self.refresh_scene_tree()
         self.queue_save_session()
 
@@ -743,6 +769,7 @@ class SceneSlateApp:
             self.last_take_number=None
             self.refresh_scene_tree()
             self.changed()
+            self.schedule_sync()
             self.notice(result+' Nessun file originale è stato duplicato.')
         except (core.CatalogError,KeyError,TypeError) as exc:
             self.undo_stack.pop()
@@ -772,50 +799,80 @@ class SceneSlateApp:
             return None
         return n,h
 
+    @staticmethod
+    def _sync_label(status):
+        return {'OK':'✓ OK','KO':'✕ KO','REVIEW':'◐ REVIEW',
+                'PENDING':'… WAIT','SINGLE':'— SINGLE','EMPTY':'—'}.get(status,'… WAIT')
+
+    @staticmethod
+    def _all_takes(shot):
+        return [t for container in [shot]+shot.get('subshots',[])
+                for t in container.get('takes',[])]
+
     def refresh_scene_tree(self,select=None):
         if select is None:
             ss=self.scene_tree.selection();select=ss[0] if ss else self.last_tree_selection
         self._updating=True
         self.scene_tree.delete(*self.scene_tree.get_children())
-        for scene,visible_shots in core.scenes_for_display(self.catalog,self.only_empty_var.get()):
-            all_takes=[t for sh in scene['shots'] for container in [sh]+sh.get('subshots',[]) for t in container['takes']]
-            videos=sum(t['video'] is not None for t in all_takes)
-            audios=sum(t['audio'] is not None for t in all_takes)
+        for scene in self.catalog['scenes']:
+            visible=[]
+            for sh in scene['shots']:
+                if self.only_unsynced_var.get():
+                    direct=scene_sync.node_status(sh['takes']) not in ('EMPTY','OK')
+                    subs=[sub for sub in sh.get('subshots',[])
+                          if scene_sync.node_status(sub['takes']) not in ('EMPTY','OK')]
+                    if not direct and not subs:continue
+                else:
+                    subs=sh.get('subshots',[])
+                    if self.only_empty_var.get():
+                        subs=[u for u in subs if core.empty_subshot(u)]
+                        if not core.empty_shot(sh) and not subs:continue
+                visible.append((sh,subs))
+            if (self.only_empty_var.get() or self.only_unsynced_var.get()) and not visible:
+                if scene['shots'] or self.only_unsynced_var.get():continue
+            all_takes=[t for sh in scene['shots'] for t in self._all_takes(sh)]
+            videos=sum(bool(t.get('video')) for t in all_takes)
+            audios=sum(bool(t.get('audio')) for t in all_takes)
+            status=scene_sync.node_status(all_takes)
             sid=f"s:{scene['number']}"
             empty=core.empty_scene(scene)
             sym='○' if empty and self.highlight_empty_var.get() else '▣'
-            tags=('empty_scene',) if empty and self.highlight_empty_var.get() else ('scene',)
+            tags=('empty_scene',) if empty and self.highlight_empty_var.get() else ('sync_bad',) if status in ('KO','REVIEW') else ('scene',)
             self.scene_tree.insert('','end',iid=sid,
                 text=self.tr(f"{sym}  {core.label(self.catalog,scene['number'])}    ({len(scene['shots'])} shot · {videos}V / {audios}A)"),
-                tags=tags,open=True)
-            for sh in visible_shots:
-                all_shot_takes=[t for container in [sh]+sh.get('subshots',[]) for t in container['takes']]
-                v=sum(t['video'] is not None for t in all_shot_takes)
-                a=sum(t['audio'] is not None for t in all_shot_takes)
+                values=(self._sync_label(status),),tags=tags,open=True)
+            for sh,subs in visible:
+                all_shot=self._all_takes(sh)
+                v=sum(bool(t.get('video')) for t in all_shot)
+                a=sum(bool(t.get('audio')) for t in all_shot)
+                status=scene_sync.node_status(all_shot)
                 tid=f"t:{scene['number']}:{sh['number']}"
                 empty_sh=core.empty_shot(sh)
                 prefix='○  ' if empty_sh and self.highlight_empty_var.get() else '    '
-                tag=('empty_shot',) if empty_sh and self.highlight_empty_var.get() else ('shot',)
+                tag=('empty_shot',) if empty_sh and self.highlight_empty_var.get() else ('sync_bad',) if status in ('KO','REVIEW') else ('shot',)
                 padding=self.catalog['settings']['padding']
                 self.scene_tree.insert(sid,'end',iid=tid,
                     text=self.tr(f"{prefix}{self.catalog['settings']['shot_label']} {str(sh['number']).zfill(padding)}    {v} video / {a} audio"),
-                    tags=tag,open=True)
-                for sub in sh.get('subshots',[]):
+                    values=(self._sync_label(status),),tags=tag,open=True)
+                for sub in subs:
+                    status=scene_sync.node_status(sub['takes'])
                     sub_empty=core.empty_subshot(sub)
-                    if self.only_empty_var.get() and not sub_empty:continue
-                    vid=sum(t['video'] is not None for t in sub['takes'])
-                    aud=sum(t['audio'] is not None for t in sub['takes'])
+                    vid=sum(bool(t.get('video')) for t in sub['takes'])
+                    aud=sum(bool(t.get('audio')) for t in sub['takes'])
                     uid=f"u:{scene['number']}:{sh['number']}:{sub['id']}"
                     prefix='○  ' if sub_empty and self.highlight_empty_var.get() else '◦  '
-                    st=('empty_subshot',) if sub_empty and self.highlight_empty_var.get() else ('subshot',)
+                    tag=('empty_subshot',) if sub_empty and self.highlight_empty_var.get() else ('sync_bad',) if status in ('KO','REVIEW') else ('subshot',)
                     self.scene_tree.insert(tid,'end',iid=uid,
-                        text=f"{prefix}{sub['name']}    {vid}V / {aud}A",tags=st)
+                        text=f"{prefix}{sub['name']}    {vid}V / {aud}A",
+                        values=(self._sync_label(status),),tags=tag)
         if select and self.scene_tree.exists(select):
             self.scene_tree.selection_set(select);self.scene_tree.see(select)
         n_scene=sum(core.empty_scene(s) for s in self.catalog['scenes'])
         n_shot=sum(core.empty_shot(sh) for s in self.catalog['scenes'] for sh in s['shots'])
         n_sub=sum(core.empty_subshot(u) for s in self.catalog['scenes'] for sh in s['shots'] for u in sh.get('subshots',[]))
-        self.scene_count_var.set(self.tr(f'{n_scene} scene · {n_shot} shot · {n_sub} sotto-shot senza file · ○ = vuoto'))
+        unsynced=sum(scene_sync.effective_status(t) != 'OK'
+                     for s in self.catalog['scenes'] for sh in s['shots'] for t in self._all_takes(sh))
+        self.scene_count_var.set(self.tr(f'{n_scene} scene · {n_shot} shot · {n_sub} sotto-shot senza file · ○ = vuoto')+f'  |  {unsynced} sync pending/review/KO')
         self._updating=False
         self.on_scene_select()
 
@@ -854,6 +911,7 @@ class SceneSlateApp:
         self.media_tree.delete(*self.media_tree.get_children())
         self.side_var.set(self.tr('Lato attivo: ')+self.active_side.upper())
         self.media_tree.heading('take',text=self.tr('Ciak'))
+        self.media_tree.heading('sync',text='SYNC')
         self.media_tree.heading('video',text=('▶ VIDEO' if self.active_side==VIDEO else 'VIDEO'))
         self.media_tree.heading('audio',text=('▶ AUDIO' if self.active_side==AUDIO else 'AUDIO'))
         if shot is None:
@@ -868,10 +926,12 @@ class SceneSlateApp:
                     mark='▶ ' if self.active_side==side and select_take==t['number'] else '  '
                     return mark+('! ' if not Path(m['path']).is_file() else '')+Path(m['path']).name
                 tag=('missing' if any(m and not Path(m['path']).is_file() for m in (v,a)) else
+                     'sync_bad' if v and a and scene_sync.effective_status(t) in ('KO','REVIEW') else
                      'paired' if v and a else 'unpaired')
                 self.media_tree.insert('','end',iid=str(t['number']),
                          values=(str(t['number'])+(' *' if t.get('manual_number') else ''),
-                                 fmt(v,VIDEO),v['quality'] if v else '—',fmt(a,AUDIO),a['quality'] if a else '—'),
+                                 fmt(v,VIDEO),v['quality'] if v else '—',fmt(a,AUDIO),a['quality'] if a else '—',
+                                 self._sync_label(scene_sync.effective_status(t))),
                          tags=(tag,))
             if select_take is not None and self.media_tree.exists(str(select_take)):
                 self.media_tree.selection_set(str(select_take));self.media_tree.focus(str(select_take));self.media_tree.see(str(select_take))
@@ -1093,6 +1153,7 @@ class SceneSlateApp:
             except core.CatalogError as exc:errors.append(str(exc))
             selected_number=None
         if count:
+            self.schedule_sync()
             self.last_take_number=first_attached['number'] if first_attached else None
             selection=f'u:{n}:{h}:{sub}' if sub else f't:{n}:{h}'
             self.refresh_scene_tree(selection);self.changed()
@@ -1301,17 +1362,101 @@ class SceneSlateApp:
             self.queue_save_session()
         return result
 
+    def schedule_sync(self, retry=False, selected=None):
+        """Only enqueue immutable paths; all catalog/Tk mutations remain on UI thread."""
+        for scene,shot,sub,container in core.iter_containers(self.catalog):
+            for t in container['takes']:
+                if not t.get('video') or not t.get('audio'):continue
+                if selected is not None and t is not selected:continue
+                status=scene_sync.effective_status(t)
+                if retry or status=='PENDING':
+                    if retry:t['sync']=None
+                    self._sync_worker.submit(t['video']['path'],t['audio']['path'])
+
+    def poll_sync(self):
+        changed=False
+        for key,result in self._sync_worker.receive():
+            for _scene,_shot,_sub,container in core.iter_containers(self.catalog):
+                for take in container['takes']:
+                    v,a=take.get('video'),take.get('audio')
+                    if not (v and a):continue
+                    if self._sync_worker.key(v['path'],a['path']) != key:continue
+                    if result['signature'] != scene_sync.fingerprint(v['path'],a['path']):continue
+                    take['sync']=copy.deepcopy(result)
+                    changed=True
+        if changed:
+            self.changed()
+            self.refresh_scene_tree()
+        if not self._sync_worker.closed:
+            self._sync_timer=self.root.after(400,self.poll_sync)
+
+    def retry_sync(self):
+        target=self.active_shot(quiet=True);num=self.selected_take()
+        if target is None or num is None:
+            self.notice('Select a take to retry waveform sync.');return
+        t=core.take_for(self.catalog,*target,num,self.selected_subshot_id())
+        if not t or not t.get('video') or not t.get('audio'):
+            self.notice('This take needs both video and audio.');return
+        t['sync']=None
+        self.schedule_sync(retry=True,selected=t)
+        self.refresh_scene_tree()
+        self.changed()
+        self.notice('Waveform synchronization queued.')
+
+    def sync_details(self):
+        target=self.active_shot(quiet=True);num=self.selected_take()
+        if target is None or num is None:return
+        t=core.take_for(self.catalog,*target,num,self.selected_subshot_id())
+        status=scene_sync.effective_status(t)
+        record=t.get('sync') or {}
+        message=(f'{self.tr("Status:")} {status}\n{self.tr("Offset (audio source at video zero):")} '
+            f'{record.get("offset_seconds")} s\nCorrelation score: {record.get("score")}\n'
+            f'{self.tr("Method:")} {record.get("method", "waveform")}\n'
+            f'{self.tr("Note:")} {record.get("error", "") or "None"}\n\n'
+            'OK matches are still worth checking by listening.')
+        messagebox.showinfo(self.tr('Waveform sync details'),message,parent=self.root)
+
     def export(self):
         self.commit_notes()
-        dest=filedialog.askdirectory(parent=self.root,title='Cartella in cui esportare i CSV')
+        # Four independent export formats, enabled by default.
+        dialog=tk.Toplevel(self.root)
+        dialog.title(self.tr('Export options'));dialog.configure(bg=self.panel)
+        dialog.transient(self.root);dialog.grab_set()
+        pane=ttk.Frame(dialog,style='Panel.TFrame',padding=18);pane.pack(fill='both',expand=True)
+        modes=[('csv','CSV metadata and reports'),('take','Individual take XML timelines'),
+               ('shot','Shot XML review timelines'),('scene','Scene XML review timelines')]
+        vars={key:tk.BooleanVar(value=True) for key,_ in modes}
+        ttk.Label(pane,text=self.tr('Choose exports:'),style='Section.TLabel').pack(anchor='w',pady=(0,8))
+        for key,title in modes:
+            ttk.Checkbutton(pane,text=self.tr(title),variable=vars[key]).pack(anchor='w',pady=2)
+        ttk.Label(pane,text=self.tr('XML timeline frame rate:'),style='Panel.TLabel').pack(anchor='w',pady=(10,3))
+        fps_var=tk.StringVar(value=str(self.catalog['settings'].get('timeline_fps',25)))
+        ttk.Combobox(pane,textvariable=fps_var,state='readonly',width=12,
+             values=['23.976','24','25','29.97','30','50','59.94','60']).pack(anchor='w')
+        selected=[]
+        def accept():
+            if not any(v.get() for v in vars.values()):
+                messagebox.showerror('Export','Select at least one format.',parent=dialog);return
+            selected.append(([key for key,v in vars.items() if v.get()],float(fps_var.get())))
+            dialog.destroy()
+        controls=ttk.Frame(pane,style='Panel.TFrame');controls.pack(fill='x',pady=(16,0))
+        ttk.Button(controls,text=self.tr('Cancel'),command=dialog.destroy).pack(side='right',padx=3)
+        ttk.Button(controls,text=self.tr('Export…'),command=accept,style='Primary.TButton').pack(side='right',padx=3)
+        center_window(dialog,self.root,440,345)
+        self.root.wait_window(dialog)
+        if not selected:return
+        modes,fps=selected[0]
+        dest=filedialog.askdirectory(parent=self.root,title='Choose export directory')
         if not dest:return
-        try:count,warnings=core.export_all(self.catalog,dest)
-        except (OSError,ValueError) as exc:
-            messagebox.showerror('Esportazione non riuscita',str(exc),parent=self.root);return
-        text=f'Exported to:\n{dest}\n\n• full_catalog.csv\n• shot_summary.csv\n• resolve_metadata.csv ({count} files)\n• export_report.txt'
-        if warnings:text+=f'\n\n{len(warnings)} avvisi nel report (alcune righe potrebbero essere escluse).'
-        messagebox.showinfo('Esportazione completata',text,parent=self.root)
-        self.notice(f'Esportazione completa · {count} file nel CSV Resolve · {len(warnings)} avvisi')
+        try:
+            count,warnings=core.export_all(self.catalog,dest,modes=modes,fps=fps)
+        except (OSError,ValueError,core.CatalogError) as exc:
+            messagebox.showerror('Export failed',str(exc),parent=self.root);return
+        self.notice(f'Export completed: {count} Resolve metadata rows, {len(warnings)} warnings')
+        messagebox.showinfo('Export completed',
+            f'Exported to: {dest}\nModes: {", ".join(modes)}\n'
+            f'Resolve rows: {count}\nWarnings: {len(warnings)}\n'
+            'See export_report.txt for skipped/unsynced media.',parent=self.root)
 
     def undo(self):
         if not self.undo_stack:self.notice('Nessuna modifica da annullare.');return
@@ -1320,6 +1465,14 @@ class SceneSlateApp:
         self.refresh_scene_tree()
         self.changed();self.notice('Ultima modifica annullata.')
 
+    def on_root_destroy(self,event):
+        if event.widget is not self.root:return
+        self._sync_worker.close()
+        if self._sync_timer is not None:
+            try:self.root.after_cancel(self._sync_timer)
+            except tk.TclError:pass
+            self._sync_timer=None
+
     def close(self):
         if not self.ask_save_unsaved(on_close=True):return
         # Persist complete browsing state even if the last action was only scrolling.
@@ -1327,6 +1480,10 @@ class SceneSlateApp:
             self.root.after_cancel(self._session_after_id)
             self._session_after_id=None
         self.save_session()
+        self._sync_worker.close()
+        if self._sync_timer is not None:
+            try:self.root.after_cancel(self._sync_timer)
+            except tk.TclError:pass
         self.root.destroy()
 
 
@@ -1334,13 +1491,15 @@ def main():
     import argparse
     parser=argparse.ArgumentParser(description='SceneSlate - video/audio footage logging')
     parser.add_argument('--export',metavar='CATALOG.json',help='Export without GUI')
-    parser.add_argument('--out',metavar='DIRECTORY',help='CSV output directory for --export')
+    parser.add_argument('--out',metavar='DIRECTORY',help='Output directory for --export')
+    parser.add_argument('--modes',default='csv,take,shot,scene',help='Comma-separated: csv,take,shot,scene')
+    parser.add_argument('--fps',type=float,default=None,help='XML timeline FPS (default from catalog)')
     parser.add_argument('project',nargs='?',help='Catalog to open')
     args=parser.parse_args()
     if args.export:
         if not args.out:parser.error('--export requires --out DIRECTORY')
         c=core.load_catalog(args.export)
-        count,warnings=core.export_all(c,args.out)
+        count,warnings=core.export_all(c,args.out,modes=args.modes.split(','),fps=args.fps)
         print(f'Exported {count} files for Resolve; {len(warnings)} warnings.')
         for w in warnings:print('WARNING:',w)
         return

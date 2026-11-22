@@ -17,7 +17,7 @@ jobs:
           python-version: '3.12'
       - name: Install Tk on Linux
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y python3-tk xvfb
+        run: sudo apt-get update && sudo apt-get install -y python3-tk xvfb ffmpeg
       - name: Test (Windows)
         if: runner.os == 'Windows'
         run: python -m unittest discover -s tests -v

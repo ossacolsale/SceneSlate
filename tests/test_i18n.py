@@ -32,7 +32,7 @@ class TranslationTests(unittest.TestCase):
             self.assertEqual(row['Scene'], '1')
             self.assertEqual(row['Take'], '1')
             self.assertEqual(row['Video exists'], 'YES')
-            self.assertIn('Resolve rows:',(root/'out'/'export_report.txt').read_text())
+            self.assertIn('Resolve metadata rows:',(root/'out'/'export_report.txt').read_text())
 
     def test_legacy_draft_path_still_available(self):
         with tempfile.TemporaryDirectory() as t:

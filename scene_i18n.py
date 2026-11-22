@@ -47,6 +47,7 @@ Elimina…|||Delete…
 ↳ Incolla nella selezione|||↳ Paste into selection
 Ctrl+C / Ctrl+V nella struttura|||Ctrl+C / Ctrl+V in the scene tree
 Solo elementi senza file|||Only items without media
+Solo non sincronizzati|||Unsynced only
 Evidenzia vuoti|||Highlight empty
 CIAK E ABBINAMENTI|||TAKES AND PAIRS
 CIAK E ABBINAMENTI / SELEZIONA UNO SHOT|||TAKES AND PAIRS / SELECT A SHOT
@@ -221,12 +222,34 @@ for line in _PAIRS.splitlines():
         left,right = line.split('|||',1)
         IT_TO_EN[left.replace('\\n','\n')] = right.replace('\\n','\n')
 EN_TO_IT = {value: key for key,value in IT_TO_EN.items()}
+EN_TO_IT.update({
+    'Scene / shot / sub-shot': 'Scena / shot / sotto-shot',
+    'Unsynced only': 'Solo non sincronizzati',
+    'Sync details': 'Dettagli sincronizzazione',
+    'Export options': 'Opzioni di esportazione',
+    'Choose exports:': 'Seleziona i formati:',
+    'CSV metadata and reports': 'Metadati CSV e report',
+    'Individual take XML timelines': 'Timeline XML per singolo ciak',
+    'Shot XML review timelines': 'Timeline XML per shot',
+    'Scene XML review timelines': 'Timeline XML per scena',
+    'XML timeline frame rate:': 'Fotogrammi al secondo delle timeline XML:',
+    'Waveform sync details': 'Dettagli sincronizzazione audio',
+    'Status:': 'Stato:',
+    'Offset (audio source at video zero):': 'Offset (audio al tempo video zero):',
+    'Method:': 'Metodo:',
+    'Note:': 'Note:',
+    'Select a take to retry waveform sync.': 'Seleziona un ciak per riprovare la sincronizzazione.',
+    'This take needs both video and audio.': 'Il ciak deve avere sia video sia audio.',
+    'Waveform synchronization queued.': 'Sincronizzazione in coda.',
+})
 
 
 def translate(message, language='en'):
     """Translate application-owned UI strings; do not use on user text or filenames."""
-    if language != 'en' or not isinstance(message,str):
+    if not isinstance(message,str):
         return message
+    if language == 'it': return EN_TO_IT.get(message,message)
+    if language != 'en': return message
     if message in IT_TO_EN: return IT_TO_EN[message]
     # Dynamic status and notification messages are assembled from short fixed
     # fragments. Prefer longest known fragments so their boundaries do not collide.

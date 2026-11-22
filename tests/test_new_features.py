@@ -101,7 +101,7 @@ class SceneSlate31Tests(unittest.TestCase):
                   'subshots':[{'id':'old','name':'A','notes':'Note A','takes':[]}]}]}]}
         filename=self.home/'old.json';filename.write_text(json.dumps(old,ensure_ascii=False))
         restored=c.load_catalog(filename)
-        self.assertEqual(restored['version'],4)
+        self.assertEqual(restored['version'],5)
         self.assertEqual(restored['scenes'][0]['description'],'Vecchie note scena')
         self.assertEqual(restored['scenes'][0]['shots'][0]['description'],'Vecchie note shot')
         self.assertEqual(restored['scenes'][0]['shots'][0]['subshots'][0]['description'],'Note A')
@@ -110,7 +110,7 @@ class SceneSlate31Tests(unittest.TestCase):
         self.assertEqual(take['order'],1)
         c.save_catalog(restored,filename)
         self.assertTrue((self.home/'old.json.v3.bak').is_file())
-        self.assertEqual(json.loads(filename.read_text())['version'],4)
+        self.assertEqual(json.loads(filename.read_text())['version'],5)
 
     def test_auto_numbering_not_based_on_file_date_and_no_implicit_shift(self):
         a,_=c.add_media(self.cat,1,1,self.video,'video')
