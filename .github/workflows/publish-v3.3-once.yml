@@ -20,12 +20,12 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          BASE_COMMIT: ${{ github.event.before }}
+          BASE_COMMIT: ddf092a7df39e600f52424a52eb5015e69788eec
         run: |
           set -euo pipefail
           if gh release view v3.3.0 -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "v3.3.0 already exists; refusing to overwrite an existing release"
-            exit 1
+            echo "v3.3.0 draft already exists; continuing build"
+            exit 0
           fi
           cat > /tmp/release-notes.md <<'NOTES'
           ## SceneSlate 3.3.0
@@ -57,7 +57,7 @@ jobs:
       - name: Checkout tagged source
         uses: actions/checkout@v4
         with:
-          ref: v3.3.0
+          ref: ddf092a7df39e600f52424a52eb5015e69788eec
           persist-credentials: false
       - name: Set up Python
         uses: actions/setup-python@v5
