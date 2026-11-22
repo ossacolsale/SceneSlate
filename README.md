@@ -1,4 +1,4 @@
-# SceneSlate 3.4
+# SceneSlate 3.5.0
 
 SceneSlate is a **cross-platform footage catalog** written in Python 3 and Tkinter. Its interface is available in **English and Italian**. A new installation starts in **English**; change the language using the **Language / Lingua** selector in the top toolbar. The preference survives restarts and upgrades, and switching languages does **not** rename files, modify a catalog or reset the scene selection.
 
@@ -86,6 +86,18 @@ Named catalogs use `*.sceneslate.json`, saved where you choose. The last catalog
 The current unnamed autosave is named `autosaved_draft.sceneslate.json`. SceneSlate **also discovers the old `bozza_autosalvata.sceneslate.json` file** when restoring an unsaved catalog from an earlier version. Older catalog JSON formats can be opened and migrated; first save of a migrated catalog creates a version-specific backup before overwriting it. Existing user-defined names and media references are preserved.
 
 To update SceneSlate, replace only its application folder; do not delete the profile directory or your named catalogs. Keep an independent backup of important metadata and footage.
+
+## Manual waveform synchronization editor (3.5.0)
+
+Select a paired take and click **✎ Sync editor / Editor sincronizzazione** near **Sync details**. The modal, bilingual editor opens two aligned waveforms: camera scratch audio above and external recorder audio below, both shown on a common video timeline. No source media is changed.
+
+- **Fine alignment:** drag the lower waveform horizontally, enter an offset directly in seconds, or nudge by **±1 ms**, **±10 ms**, **±100 ms**, or **±1 s**. Available viewing windows span 2–30 seconds, with an initial waveform scan of up to 240 seconds.
+- **Listen inside SceneSlate:** press **▶ Play 7 s** to hear both audio sources simultaneously. Split mode sends camera audio to the left stereo channel and recorder audio to the right. Mixed mode reveals echoes and doubled syllables; solo modes let you hear each source independently. The playback position slider lets you test several moments.
+- Windows uses Python's built-in WAV playback; Linux requires an available **ffplay**, **paplay**, or **aplay** command. FFmpeg and ffprobe are still required for waveform extraction and temporary preview rendering. The temporary WAV previews are cleaned up when the editor closes; source files remain untouched.
+- **Human approval:** use **✓ Confirm manual alignment** only after listening. This saves the signed offset as an OK sync record with method = manual, manual_verified = true, and a fingerprint of the original media. Pending automatic worker results cannot overwrite a valid manual approval. **↻ Sync** asks for confirmation before replacing a manually verified offset.
+- The manual result is persisted in the JSON catalog, reported in the CSV, displayed in the SYNC columns, and used in all XML export modes exactly like an automatically verified OK.
+
+**Precision caveat:** SceneSlate stores manual offsets with millisecond-level controls (internally rounded to microseconds), and decodes the listening preview at 16 kHz. **FCP7 XML/XMEML uses integer video-frame in/out positions**, so exporting to Resolve quantizes the offset to the configured timeline frame rate (e.g., 25 fps means 40 ms frame steps). For sample-accurate downstream placement, a different interchange approach or native Resolve automation would be needed. The editor aligns a constant offset; it does not compensate for time drift in long recordings or display video frames. Listen at several positions.
 
 ## Exports
 
