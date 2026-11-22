@@ -39,12 +39,16 @@ jobs:
       - name: Run tests on Linux
         if: runner.os == 'Linux'
         run: xvfb-run -a python -m unittest discover -s tests -v
-      - name: Install PyInstaller
-        run: python -m pip install pyinstaller
+      - name: Install PyInstaller and icon verifier
+        run: python -m pip install pyinstaller pefile
       - name: Build Windows executable
         if: runner.os == 'Windows'
         shell: pwsh
-        run: python -m PyInstaller --onefile --windowed --noconfirm --name SceneSlate --paths . --icon sceneslate_logo.ico --add-data 'sceneslate_icon.png;.' --add-data 'sceneslate_logo.ico;.' scene_slate.pyw
+        run: python -m PyInstaller --clean --onefile --windowed --noconfirm --name "SceneSlate-$env:GITHUB_REF_NAME" --paths . --icon sceneslate_logo.ico --add-data 'sceneslate_icon.png;.' --add-data 'sceneslate_logo.ico;.' scene_slate.pyw
+      - name: Verify embedded Windows EXE icon
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: python scripts/verify_windows_icon.py "dist/SceneSlate-$env:GITHUB_REF_NAME.exe" sceneslate_logo.ico
       - name: Build Linux executable
         if: runner.os == 'Linux'
         shell: bash
@@ -52,7 +56,7 @@ jobs:
       - name: Package Windows executable
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Compress-Archive -Path dist/SceneSlate.exe -DestinationPath "SceneSlate-$env:GITHUB_REF_NAME-windows-x64.zip"
+        run: Compress-Archive -Path "dist/SceneSlate-$env:GITHUB_REF_NAME.exe" -DestinationPath "SceneSlate-$env:GITHUB_REF_NAME-windows-x64.zip"
       - name: Package Linux executable
         if: runner.os == 'Linux'
         shell: bash

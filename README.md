@@ -1,10 +1,17 @@
-# SceneSlate 3.8.0
+# SceneSlate 3.9.0
 
 ![SceneSlate logo](sceneslate_logo.png)
 
 SceneSlate is a **cross-platform footage catalog** written in Python 3 and Tkinter. Its interface is available in **English and Italian**. A new installation starts in **English**; change the language using the **Language / Lingua** selector in the top toolbar. The preference survives restarts and upgrades, and switching languages does **not** rename files, modify a catalog or reset the scene selection.
 
 Footage is organized as **scene → shot → optional sub-shot → take**. Every take has an optional video reference and an optional audio reference, each with independent ratings (`B` good, `R` reserve, `S` reject). Takes can have descriptions and annotations; scenes, shots and sub-shots have optional descriptions. **Original media files are never renamed, moved, deleted or duplicated.** When a video/audio pair is complete, SceneSlate attempts **background waveform synchronization** if FFmpeg is installed; the alignment metadata is stored per take, never written into the media.
+
+## 3.9.0 — Playback playhead, sub-shot routing and Windows icon
+
+- The Sync Editor now shows a moving playhead while listening, uses a video-clock preview position, and follows it automatically as playback progresses. Waveform data is loaded in bounded background windows as the view scrolls, including after the first 100 seconds. **Stop** interrupts playback; repositioning the timeline stops the old playback so the line never silently diverges from what you hear. The cursor follows a wall-clock playback estimate and is not a sample-accurate hardware audio timestamp.
+- **If a shot contains any sub-shots, new media/takes must be added to a sub-shot.** Direct attachment to that shot is blocked in the UI, drag-and-drop and the catalog engine. Copy/paste of take rows into a parent shot with sub-shots is also blocked, but pasting directly into a sub-shot remains available. Older direct-shot takes are preserved rather than silently moved.
+- Linked scene/shot/sub-shot labels are shown **after the video/audio counters**, never before them. The entire list of linked destinations is displayed inline where it fits, with a complete, multiline tooltip on hover for clipped lines.
+- Windows uses a versioned executable filename (`SceneSlate-v3.9.0.exe`) to avoid stale Windows Explorer icon caches; its SceneSlate icon is embedded using PyInstaller. The build pipeline verifies the actual Windows icon resources against the shipped `.ico` file before uploading the executable.
 
 ## 3.8.0 — Faster review and navigation
 

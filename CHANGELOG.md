@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.9.0 — Playback playhead, sub-shot routing and icon verification
+
+- Moving playback cursor and auto-scrolling waveform timeline in the manual Sync Editor, with bounded asynchronous waveform reload beyond the initial audio window; seeking stops the old playback.
+- Shot-level attachment blocked once sub-shots exist; core and UI both reject attachments, and copy/paste cannot bypass the restriction. Legacy direct-shot takes remain untouched.
+- Link groups now list every connected destination following the media counts, with a complete multiline tooltip on hover.
+- Windows EXE filename is versioned and PyInstaller embeds `sceneslate_logo.ico`; a Windows build verification step inspects PE icon resources before publishing.
+- Expanded regression coverage for legacy catalog preservation, blocked drop/paste, linked tooltips and long-recording playhead behavior.
+
+
 ## 3.8.0 — Review ergonomics and filtering
 
 - Windows executable icon included in published binaries.

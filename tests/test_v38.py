@@ -138,9 +138,9 @@ class Gui38Tests(unittest.TestCase):
         core.configure_links(app.catalog,1,None,None,[core.node_ref(2),core.node_ref(3)])
         app.refresh_scene_tree()
         txt=app.scene_tree.item('s:1','text')
-        self.assertIn('⇄ S2, S3',txt)
+        self.assertIn('⇄ Scene 2, Scene 3',txt)
         app.only_unsynced_var.set(False)
-        self.assertIn('⇄ S1, S3',app.scene_tree.item('s:2','text'))
+        self.assertIn('⇄ Scene 1, Scene 3',app.scene_tree.item('s:2','text'))
 
     def test_sync_editor_undo_redo_and_unlimited_chunk_scheduling(self):
         from scene_sync_editor import SyncEditor

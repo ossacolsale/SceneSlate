@@ -228,6 +228,11 @@ IT_TO_EN.update({
 })
 EN_TO_IT = {value: key for key,value in IT_TO_EN.items()}
 EN_TO_IT.update({
+    'Sub-shot required': 'Seleziona un sotto-shot',
+    'This shot has sub-shots. Select a sub-shot to attach media or add takes.': 'Questo shot contiene sotto-shot. Seleziona un sotto-shot per associare media o aggiungere ciak.',
+    'This shot has sub-shots. Paste takes into a sub-shot instead.': 'Questo shot contiene sotto-shot. Incolla i ciak in un sotto-shot.',
+    'Linked with:': 'Collegato con:',
+
     'One-sided (SINGLE)': 'Solo audio/video (SINGLE)',
     'Scene / shot / sub-shot': 'Scena / shot / sotto-shot',
     '✎ Sync editor': '✎ Editor sincronizzazione',
