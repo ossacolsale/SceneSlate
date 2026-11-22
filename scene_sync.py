@@ -22,12 +22,28 @@ SYNC_STATUSES = {'OK','REVIEW','KO','PENDING'}
 
 
 def executables():
-    ffmpeg = os.environ.get('SCENESLATE_FFMPEG') or shutil.which('ffmpeg')
-    ffprobe = os.environ.get('SCENESLATE_FFPROBE') or shutil.which('ffprobe')
-    if ffmpeg and not ffprobe:
-        sibling=Path(ffmpeg).with_name('ffprobe.exe' if os.name == 'nt' else 'ffprobe')
-        if sibling.is_file(): ffprobe=str(sibling)
-    return ffmpeg, ffprobe
+    """Use explicit overrides, then a system pair, then managed user-local FFmpeg.
+
+    Managed executables work without changing the PATH environment variable.
+    """
+    import scene_dependencies
+    local = scene_dependencies.managed_executables()
+    system_ffmpeg = shutil.which('ffmpeg')
+    system_ffprobe = shutil.which('ffprobe')
+    env_ffmpeg = os.environ.get('SCENESLATE_FFMPEG')
+    env_ffprobe = os.environ.get('SCENESLATE_FFPROBE')
+    if env_ffmpeg or env_ffprobe:
+        ffmpeg = env_ffmpeg or system_ffmpeg or (local[0] if local else None)
+        ffprobe = env_ffprobe or system_ffprobe or (local[1] if local else None)
+        if ffmpeg and not ffprobe:
+            sibling=Path(ffmpeg).with_name('ffprobe.exe' if os.name == 'nt' else 'ffprobe')
+            if sibling.is_file():ffprobe=str(sibling)
+        return ffmpeg, ffprobe
+    if system_ffmpeg and system_ffprobe:
+        return system_ffmpeg, system_ffprobe
+    if local:
+        return local
+    return system_ffmpeg, system_ffprobe
 
 
 def fingerprint(video, audio):
