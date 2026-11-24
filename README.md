@@ -1,10 +1,17 @@
-# SceneSlate 3.10.0
+# SceneSlate 3.10.1
 
 <img src="sceneslate_logo.png" alt="SceneSlate logo" width="180">
 
 SceneSlate is a **cross-platform footage catalog** written in Python 3 and Tkinter. Its interface is available in **English and Italian**. A new installation starts in **English**; change the language using the **Language / Lingua** selector in the top toolbar. The preference survives restarts and upgrades, and switching languages does **not** rename files, modify a catalog or reset the scene selection.
 
 Footage is organized as **scene → shot → optional sub-shot → take**. Every take has an optional video reference and an optional audio reference, each with independent ratings (`B` good, `R` reserve, `S` reject). Takes can have descriptions and annotations; scenes, shots and sub-shots have optional descriptions. **Original media files are never renamed, moved, deleted or duplicated.** When a video/audio pair is complete, SceneSlate attempts **background waveform synchronization** if FFmpeg is installed; the alignment metadata is stored per take, never written into the media.
+
+## 3.10.1 — Playback and review fixes
+
+- **Clear content…** in the scene/shot/sub-shot context menu removes takes from the selected subtree and linked equivalents after confirmation, preserving node descriptions, hierarchy, link groups and original media; Undo restores the catalog.
+- Flat scene/shot/sub-shot list, with no expandable groups; scene and shot rows remain selectable for editing and linking.
+- Mouse wheel scrolling in the link selector. Persistent context menus in the video browser and take list provide playback and player settings. Windows external playback restores the normal DLL search directory before launching.
+- Robust fine-offset clustering and globally corroborated promotion of REVIEW to OK, with competing offsets and strong contradictory evidence still checked. Previous automatic REVIEW/KO entries are retried; manual and existing OK alignments are preserved. Real-world false-positive rates remain unmeasured.
 
 ## 3.10.0 — Faster navigation and spectral synchronization
 

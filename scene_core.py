@@ -735,6 +735,67 @@ def configure_links(c, scene_number, shot_number=None, subshot_id=None, member_r
     return gid
 
 
+def clear_take_targets(c, scene_number, shot_number=None, subshot_id=None):
+    """Resolve the subtree plus linked equivalents, without altering structure.
+
+    Descendant links and links inherited from a scene/shot are transitive.
+    Match equivalent sub-shots by name (their IDs may differ in older catalogs).
+    """
+    kind, source = _kind_and_node(c, scene_number, shot_number, subshot_id)
+    if source is None:
+        raise CatalogError('Elemento collegabile non trovato.')
+    nodes = {}
+    for ref, level, node in iter_nodes(c):
+        parts = ref.split(':', 3)
+        key = (int(parts[1]), int(parts[2]) if len(parts)>2 else None,
+               parts[3] if len(parts)>3 else None)
+        nodes[key] = (level, node)
+    groups = defaultdict(list)
+    for key, (level, node) in nodes.items():
+        if node.get('link_group'):
+            groups[level, node['link_group']].append(key)
+    queue = [(scene_number, shot_number, subshot_id)]
+    seen = set()
+    targets = []
+    while queue:
+        key = queue.pop()
+        if key in seen or key not in nodes:
+            continue
+        seen.add(key)
+        n,h,u = key
+        level,node = nodes[key]
+        queue.extend(groups.get((level,node.get('link_group')), []))
+        if level == 'scene':
+            queue.extend(k for k in nodes if k[0]==n and k[1] is not None)
+        elif level == 'shot':
+            queue.extend(k for k in nodes if k[:2]==(n,h) and k[2] is not None)
+        if level != 'scene':
+            targets.append(node)
+            # Project only this node, not its whole ancestor, onto linked parents.
+            for parent_key in ((n,None,None), (n,h,None)):
+                if parent_key == key or parent_key not in nodes:
+                    continue
+                parent_level,parent = nodes[parent_key]
+                for other in groups.get((parent_level,parent.get('link_group')), []):
+                    on,oh,_ = other
+                    oh = h if parent_level=='scene' else oh
+                    if u is None:
+                        queue.append((on,oh,None))
+                    else:
+                        queue.extend(k for k,(lv,d) in nodes.items()
+                                     if k[:2]==(on,oh) and lv=='subshot'
+                                     and d['name'].casefold()==node['name'].casefold())
+    return targets
+
+
+def clear_take_content(c, scene_number, shot_number=None, subshot_id=None):
+    targets=clear_take_targets(c,scene_number,shot_number,subshot_id)
+    count=sum(len(node['takes']) for node in targets)
+    for node in targets:
+        node['takes'].clear()
+    return count
+
+
 def file_time_from_path(path):
     try:return birth_timestamp(Path(path).stat())[0]
     except (OSError,ValueError):return float('inf')

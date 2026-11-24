@@ -226,8 +226,15 @@ IT_TO_EN.update({
     '⇄ Collegamenti…': '⇄ Links…',
     'Gestisci collegamenti…': 'Manage links…',
 })
+IT_TO_EN.update({'Svuota contenuto…':'Clear content…'})
 EN_TO_IT = {value: key for key,value in IT_TO_EN.items()}
 EN_TO_IT.update({
+    'No takes to clear.': 'Nessun ciak da svuotare.',
+    'Remove all takes from this item, its descendants and linked equivalents?': 'Rimuovere tutti i ciak da questo elemento, dai suoi discendenti e dagli equivalenti collegati?',
+    'Take entries to remove:': 'Ciak da rimuovere:',
+    'Structure, node descriptions and link groups are preserved. Original media files are not deleted. Undo is available.': 'Struttura, descrizioni dei nodi e gruppi di collegamento vengono conservati. I file originali non vengono cancellati. È possibile annullare.',
+    'Content cleared. Original media unchanged.': 'Contenuto svuotato. File originali invariati.',
+
     'Sub-shot required': 'Seleziona un sotto-shot',
     'This shot has sub-shots. Select a sub-shot to attach media or add takes.': 'Questo shot contiene sotto-shot. Seleziona un sotto-shot per associare media o aggiungere ciak.',
     'This shot has sub-shots. Paste takes into a sub-shot instead.': 'Questo shot contiene sotto-shot. Incolla i ciak in un sotto-shot.',
@@ -333,6 +340,7 @@ EN_TO_IT.update({
     'Play selected video (F4)':'Riproduci video selezionato (F4)', 'Video player…':'Lettore video…', 'Use system video player':'Usa lettore video di sistema',
     'Choose video player executable':'Scegli eseguibile del lettore video',
     'Video player:':'Lettore video:', 'System video player selected.':'Lettore video di sistema selezionato.',
+    'Select a video to play.':'Seleziona un video da riprodurre.', 'Opening media:':'Apertura file:', 'Unable to open media.':'Impossibile aprire il file.',
     'Media / links':'Media / collegamenti', 'Sub-shot':'Sotto-shot', 'Scene':'Scena',
 })
 

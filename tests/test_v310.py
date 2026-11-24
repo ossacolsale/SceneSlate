@@ -52,7 +52,7 @@ class GuiTests(unittest.TestCase):
                 app.language='en';app.video_player='my player.exe'
                 with patch('scene_slate.subprocess.Popen') as proc:
                     app.launch_media(video,'video')
-                    proc.assert_called_once_with(['my player.exe',str(video)],shell=False)
+                    proc.assert_called_once_with(['my player.exe',str(video.resolve())],shell=False)
                 self.assertEqual(app.session_data()['video_player'],'my player.exe')
                 from scene_sync_editor import SyncEditor
                 editor=Mock();editor.play_active=True

@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.10.1 — Playback, flat catalog and synchronization fixes
+
+- **Clear content…** in the scene/shot/sub-shot context menu removes takes from the selected subtree and linked equivalents after confirmation, preserving node descriptions, hierarchy, link groups and original media; Undo restores the catalog.
+- Persistent playback menus and Windows-safe external player launch; player configuration available in the take list and video browser.
+- Flat catalog rows and mouse-wheel scrolling in the link selector.
+- More tolerant, globally corroborated waveform consensus with explicit rival/outlier checks; automatic REVIEW/KO records are retried.
+
 ## 3.10.0 — Faster navigation and spectral evidence
 
 - Persistent custom video player, quick preview shortcuts, Space playback toggle, localized rating codes and shortcuts.

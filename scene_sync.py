@@ -18,7 +18,7 @@ SAMPLE_RATE = 800
 MAX_SECONDS = 90
 MAX_OFFSET_SECONDS = 60
 MIN_OVERLAP_SECONDS = 8
-METHOD = 'multistage_waveform_v3'
+METHOD = 'multistage_waveform_v4'
 SYNC_STATUSES = {'OK','REVIEW','KO','PENDING'}
 
 
@@ -419,7 +419,10 @@ def _fine_candidate(video, audio, offset, rate=FINE_RATE):
     if len(windows) < 2:
         return None
     values=sorted(w['offset'] for w in windows)
-    mid=(values[(len(values)-1)//2]+values[len(values)//2])/2
+    # Prefer the strongest tight cluster over the median of several noisy peaks.
+    clusters=[[w for w in windows if abs(w['offset']-seed['offset'])<=.010] for seed in windows]
+    agree=max(clusters,key=lambda cluster:(len(cluster),sum(w['score'] for w in cluster)))
+    mid=sum(w['offset']*w['score'] for w in agree)/sum(w['score'] for w in agree)
     agree=[w for w in windows if abs(w['offset']-mid)<=.012]
     outliers=[w for w in windows if abs(w['offset']-mid)>.012 and w['score']>=.16]
     if len(agree)<2:
@@ -436,7 +439,7 @@ def _fine_candidate(video, audio, offset, rate=FINE_RATE):
     score=scores[len(scores)//2]
     spread=max(w['offset'] for w in agree)-min(w['offset'] for w in agree)
     phat=[w['phat_disagreement_s'] for w in agree if w['phat_disagreement_s'] is not None]
-    phat_ok=not phat or sum(x<=.008 for x in phat)>=max(2,len(phat)//2)
+    phat_ok=not phat or sum(x<=.008 for x in phat)>=max(1,(len(phat)+1)//2)
     # Two or three very clean independent windows can provide stronger evidence
     # than four mediocre ones.  This reduces unnecessary REVIEW statuses without
     # lowering the bar for ambiguous/repetitive signals.
@@ -452,14 +455,17 @@ def _fine_candidate(video, audio, offset, rate=FINE_RATE):
     good=consistent or very_clean or eq_resilient
     return {'status':'OK' if good else 'REVIEW', 'offset':weighted,
             'score':score,'valid':len(agree),'window_count':len(windows),
-            'spread_ms':(values[-1]-values[0])*1000,
+            'spread_ms':spread*1000,
+            'all_window_spread_ms':(values[-1]-values[0])*1000,
             'error':'' if good else 'Waveform alignment plausible; local matches need manual review',
             'precision_ms':1000/rate,
             'phat_ok':phat_ok,
             'consensus_windows':len(agree),
             'strong_unique_windows':unique_peaks,
             'temporal_span':max(w.get('start',0.) for w in agree)-min(w.get('start',0.) for w in agree),
-            'outliers':len(outliers)}
+            'outliers':len(outliers),
+            'outlier_score':max((w['score'] for w in outliers),default=0.),
+            'inlier_polarity_consistent':len({w.get('polarity',1) for w in agree})==1}
 
 
 def spectral_lags(video, audio, rate=FINE_RATE, max_offset_seconds=MAX_OFFSET_SECONDS):
@@ -552,6 +558,28 @@ def robust_align(video_coarse, audio_coarse, video_fine, audio_fine,
                 and fine['score']>=.12 and sp>=.28 and margin>=.13
                 and fine.get('strong_unique_windows',0)>=2 and fine.get('temporal_span',0)>=2.4 and not fine.get('outliers',0)):
                 fine['status']='OK';fine['error']=''
+            # A distinctive global spectral or waveform alignment can justify OK
+            # even when a quiet/noisy local window fails the fine verifier.
+            # Require at least two temporally separated, tight waveform inliers,
+            # and reject rival alignments, strong contradictions or drift.
+            wave=candidate.get('waveform',0.)
+            rival_wave=max((c.get('waveform',0.) for c in candidates
+                            if abs(c['offset']-fine['offset'])>.09),default=0.)
+            global_unique=(sp>=.20 and margin>=.075) or (wave>=.30 and wave-rival_wave>=.075)
+            plausible=(fine['valid']>=2 and fine.get('spread_ms',999)<=10
+                       and fine['score']>=.13 and fine.get('temporal_span',0)>=2.4
+                       and fine.get('strong_unique_windows',0)>=2
+                       and fine.get('outlier_score',1 if fine.get('outliers') else 0)<min(.24,fine['score']*.7)
+                       and fine.get('inlier_polarity_consistent',True))
+            # Stronger global spectral corroboration permits weak local peak
+            # uniqueness, but still requires coherent fine estimates.
+            spectral_rescue=(sp>=.32 and margin>=.13 and fine['valid']>=2
+                and fine['score']>=.10 and fine.get('spread_ms',999)<=8
+                and fine.get('temporal_span',0)>=2.4
+                and fine.get('outlier_score',1 if fine.get('outliers') else 0)<.16
+                and fine.get('inlier_polarity_consistent',True))
+            if fine['status']=='REVIEW' and ((global_unique and plausible) or spectral_rescue):
+                fine['status']='OK';fine['error']='';fine['decision']='global corroboration'
             results.append(fine)
     if not results:
         return {'status':'KO','offset':None,'score':0.,'error':'No coherent multiresolution match'}
@@ -599,6 +627,8 @@ def synchronize(video_path,audio_path):
         record['candidate_count']=len(candidates)
         record['spectral_score']=refined.get('spectral_score')
         record['spectral_margin']=refined.get('spectral_margin')
+        record['decision']=refined.get('decision','local consensus')
+        record['window_outliers']=refined.get('outliers',0)
         record['note']='Resolution is not accuracy. Validate important takes by ear; XML export rounds to timeline frames.'
         return record
     except (OSError,ValueError,RuntimeError,subprocess.TimeoutExpired) as exc:
