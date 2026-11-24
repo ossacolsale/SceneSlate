@@ -1,10 +1,20 @@
-# SceneSlate 3.9.0
+# SceneSlate 3.10.0
 
-![SceneSlate logo](sceneslate_logo.png)
+<img src="sceneslate_logo.png" alt="SceneSlate logo" width="180">
 
 SceneSlate is a **cross-platform footage catalog** written in Python 3 and Tkinter. Its interface is available in **English and Italian**. A new installation starts in **English**; change the language using the **Language / Lingua** selector in the top toolbar. The preference survives restarts and upgrades, and switching languages does **not** rename files, modify a catalog or reset the scene selection.
 
 Footage is organized as **scene → shot → optional sub-shot → take**. Every take has an optional video reference and an optional audio reference, each with independent ratings (`B` good, `R` reserve, `S` reject). Takes can have descriptions and annotations; scenes, shots and sub-shots have optional descriptions. **Original media files are never renamed, moved, deleted or duplicated.** When a video/audio pair is complete, SceneSlate attempts **background waveform synchronization** if FFmpeg is installed; the alignment metadata is stored per take, never written into the media.
+
+## 3.10.0 — Faster navigation and spectral synchronization
+
+- Play a catalogued video with Enter/F4 or double-click the video cell; F4 previews a video in the file browser without attaching it. Tools → Video player… chooses an executable, or Use system video player restores OS defaults. The choice is saved per user.
+- Space toggles playback in the Sync Editor (except while editing a text field).
+- English ratings and shortcuts are G (Good), R (Reserve), X (Reject); Italian remains B/R/S. Internal catalog and CSV codes remain compatible.
+- The hierarchy shows Scene, Shot, Sub-shot, Media / links and Sync columns; every child row repeats its scene number. Up/Down/Home/End navigate the link selector. The header displays a compact logo.
+- Multiband log spectral-change correlation provides another independent candidate/uniqueness test, combined with high-resolution waveform consensus. Old automatic REVIEW/KO records are retried; manually approved and previously OK pairs are preserved. NumPy enables the spectral stage. No claim of a calibrated false-positive rate is made.
+
+Research: [Temporal Synchronization of Multiple Audio Signals](https://research.google/pubs/temporal-synchronization-of-multiple-audio-signals/); [Clustering and Synchronizing Multi-camera Video via Landmark Cross-Correlation](https://research.adobe.com/publication/clustering-and-synchronizing-multi-camera-video-via-landmark-cross-correlation/); [SyncSink](https://github.com/JorenSix/SyncSink). This implementation uses multiband feature correlation rather than copying those algorithms.
 
 ## 3.9.0 — Playback playhead, sub-shot routing and Windows icon
 

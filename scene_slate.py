@@ -130,6 +130,10 @@ class FileBrowser(ttk.Frame):
         self.tree.tag_configure('file', foreground='#edf3ff')
         self.tree.tag_configure('unused', foreground='#ffce78')
         self.tree.bind('<Double-1>', self.on_double_click)
+        if self.kind==VIDEO:
+            self.tree.bind('<F4>',self.preview_video)
+            self.tree.bind('<Control-Return>',self.preview_video)
+            self.tree.bind('<Button-3>',self.preview_menu)
         self.tree.bind('<Return>', self.on_enter)
         self.tree.bind('<ButtonPress-1>', self.drag_press, add='+')
         self.tree.bind('<B1-Motion>', self.drag_motion, add='+')
@@ -310,6 +314,21 @@ class FileBrowser(ttk.Frame):
         if paths: self.app.attach_files(self.kind, paths)
         else: self.app.notice('Seleziona uno o più file, poi usa “Associa allo shot”.')
 
+    def preview_menu(self,event):
+        row=self.tree.identify_row(event.y)
+        if not row or not Path(row).is_file():return
+        self.tree.selection_set(row);self.tree.focus(row)
+        menu=tk.Menu(self.tree,tearoff=False)
+        menu.add_command(label=self.app.tr('Play selected video (F4)'),command=self.preview_video)
+        menu.add_command(label=self.app.tr('Video player…'),command=self.app.choose_video_player)
+        try:menu.tk_popup(event.x_root,event.y_root)
+        finally:menu.grab_release();menu.destroy()
+
+    def preview_video(self,event=None):
+        paths=self.selected_files()
+        if paths:self.app.launch_media(paths[0],VIDEO)
+        return 'break'
+
     def on_double_click(self,event):
         row = self.tree.identify_row(event.y)
         if not row: return
@@ -347,6 +366,8 @@ class SceneSlateApp:
         self.filepath=None
         self._session_dir=session.config_dir()
         self._session= session.read_state(self._session_dir)
+        self.video_player = self._session.get('video_player','')
+        if not isinstance(self.video_player,str): self.video_player='' 
         self._ffmpeg_prompt_suppressed = bool(self._session.get('ffmpeg_prompt_suppressed',False))
         self._ffmpeg_ask_var = tk.BooleanVar(value=not self._ffmpeg_prompt_suppressed)
         self._ffmpeg_installing = False
@@ -426,7 +447,7 @@ class SceneSlateApp:
             except tk.TclError:
                 pass
             try:
-                self.logo_header_image = self.logo_image.subsample(4, 4)
+                self.logo_header_image = self.logo_image.subsample(max(1,self.logo_image.width()//36),max(1,self.logo_image.height()//36))
             except tk.TclError:
                 self.logo_header_image = self.logo_image
         except tk.TclError:
@@ -470,7 +491,7 @@ class SceneSlateApp:
         header.pack(fill='x')
         brand_frame=ttk.Frame(header,style='Root.TFrame');brand_frame.pack(side='left')
         if self.logo_header_image is not None:
-            ttk.Label(brand_frame,image=self.logo_header_image,style='Root.TFrame').pack(side='left',padx=(0,10))
+            tk.Label(brand_frame,image=self.logo_header_image,bg=self.bg,bd=0,highlightthickness=0).pack(side='left',padx=(0,10))
         title_frame=ttk.Frame(brand_frame,style='Root.TFrame');title_frame.pack(side='left')
         ttk.Label(title_frame,text='SceneSlate',style='Title.TLabel').pack(anchor='w')
         ttk.Label(title_frame,text='Catalogazione riprese  •  Associazioni video/audio  •  Export Resolve',style='Sub.TLabel').pack(anchor='w')
@@ -484,6 +505,10 @@ class SceneSlateApp:
         self.tools_menu.add_checkbutton(label='Ask at startup when FFmpeg is missing',
                        variable=self._ffmpeg_ask_var,command=self.set_ffmpeg_reminders)
         self.tools_menu.add_command(label='FFmpeg download website',command=lambda:webbrowser.open(scene_dependencies.SOURCE_PAGE))
+        self.tools_menu.add_separator()
+        self.tools_menu.add_command(label='Play selected video (F4)',command=self.play_selected_video)
+        self.tools_menu.add_command(label='Video player…',command=self.choose_video_player)
+        self.tools_menu.add_command(label='Use system video player',command=self.reset_video_player)
         self.tools_button.configure(menu=self.tools_menu)
         self.tools_button.pack(side='right',padx=(8,0))
         ttk.Label(actions,text='Lingua:',style='Sub.TLabel').pack(side='right',padx=(12,0))
@@ -503,10 +528,11 @@ class SceneSlateApp:
         for text,action,sty in [('+ Scena',self.add_scene,'Primary.TButton'),('+ Shot',self.add_shot,'Primary.TButton'),('+ Sotto-shot',self.add_subshot,'Primary.TButton'),('⇄ Collegamenti…',self.manage_links,'TButton'),('− Elimina',self.delete_selected,'Danger.TButton'),('Rinumera…',self.renumber,'TButton')]:
             ttk.Button(controls,text=text,command=action,style=sty).pack(side='left',padx=(0,5))
         scene_wrap=ttk.Frame(left,style='Panel.TFrame');scene_wrap.pack(fill='both',expand=True)
-        self.scene_tree=ttk.Treeview(scene_wrap,columns=('sync',),show='tree headings',selectmode='browse',height=5)
-        self.scene_tree.heading('#0',text='Scene / shot / sub-shot')
+        self.scene_tree=ttk.Treeview(scene_wrap,columns=('shot','subshot','info','sync'),show='tree headings',selectmode='browse',height=5)
+        for col, name, width in [('#0','Scene',105),('shot','Shot',56),('subshot','Sub-shot',88),('info','Media / links',270)]:
+            self.scene_tree.heading(col,text=self.tr(name))
+            self.scene_tree.column(col,width=width,minwidth=width if col!='info' else 100,stretch=col=='info',anchor='w')
         self.scene_tree.heading('sync',text='SYNC')
-        self.scene_tree.column('#0',width=380,minwidth=200,stretch=True)
         self.scene_tree.column('sync',width=95,minwidth=78,stretch=False,anchor='center')
         self.scene_tree.pack(side='left',fill='both',expand=True)
         sc=ttk.Scrollbar(scene_wrap,command=self.scene_tree.yview);sc.pack(side='right',fill='y')
@@ -584,8 +610,9 @@ class SceneSlateApp:
         self.media_tree.bind('<Left>',lambda e:self.switch_side(VIDEO))
         self.media_tree.bind('<Right>',lambda e:self.switch_side(AUDIO))
         self.media_tree.bind('<Delete>',lambda e:self.remove_media())
-        for key,quality in [('b','B'),('r','R'),('s','S'),('B','B'),('R','R'),('S','S')]:
-            self.media_tree.bind(f'<KeyPress-{key}>',lambda e,q=quality:self.set_quality(q))
+        self.media_tree.bind('<KeyPress>',self.rating_shortcut)
+        self.media_tree.bind('<Return>',self.play_selected_video)
+        self.media_tree.bind('<F4>',self.play_selected_video)
         self.media_tree.bind('<<TreeviewSelect>>',self.on_take_select)
         self.media_tree.bind('<ButtonRelease-1>',self.drop_scene_release,add='+')
         row=ttk.Frame(left,style='Panel.TFrame');row.pack(fill='x',pady=(7,4))
@@ -596,9 +623,11 @@ class SceneSlateApp:
         ttk.Button(row,text='− File sul lato',command=self.remove_media).pack(side='right')
         r=ttk.Frame(left,style='Panel.TFrame');r.pack(fill='x',pady=(1,3))
         ttk.Label(r,text='Qualifica lato attivo:',style='Muted.TLabel').pack(side='left',padx=(0,8))
+        self.rating_buttons={}
         for q,name in core.QUALITIES.items():
-            ttk.Button(r,text=f'{q} · {name}',command=lambda q=q:self.set_quality(q)).pack(side='left',padx=2)
-        ttk.Label(left,text='←/→ sceglie VIDEO o AUDIO; ↑/↓ sceglie il ciak; B/R/S cambia la qualifica. Trascina un file sulla riga per abbinarlo.',
+            btn=ttk.Button(r,text=f'{q} · {name}',command=lambda q=q:self.set_quality(q))
+            btn.pack(side='left',padx=2);self.rating_buttons[q]=btn
+        ttk.Label(left,text='←/→ sceglie VIDEO o AUDIO; ↑/↓ sceglie il ciak; B/R/S cambia la qualifica. F4: riproduci video. Trascina un file sulla riga per abbinarlo.',
                   style='Muted.TLabel',wraplength=550).pack(anchor='w')
         self.details_toggle=ttk.Button(left,text='▸ Descriptions / Notes',command=self.toggle_details)
         self.details_toggle.pack(fill='x',pady=(7,1))
@@ -800,10 +829,10 @@ class SceneSlateApp:
         self._configure_filter_choices()
         self._render_details_toggle()
         self.media_tree.heading('take',text=self.tr('Ciak'))
-        self.media_tree.heading('vq',text='B/R/S')
-        self.media_tree.heading('aq',text='B/R/S')
+        self.refresh_rating_labels()
         self.media_tree.heading('sync',text='SYNC')
-        self.scene_tree.heading('#0',text=self.tr('Scene / shot / sub-shot'))
+        for col,name in [('#0','Scene'),('shot','Shot'),('subshot','Sub-shot'),('info','Media / links')]:
+            self.scene_tree.heading(col,text=self.tr(name))
         self.scene_tree.heading('sync',text='SYNC')
         self.scene_count_var.set(self.tr(self.scene_count_var.get()))
         self.side_var.set(self.tr('Lato attivo: ')+self.active_side.upper())
@@ -991,6 +1020,7 @@ class SceneSlateApp:
                 'sync_filter':self.sync_filter,
                 'take_filter':self.take_filter,
                 'details_expanded':self.details_expanded,
+                'video_player':self.video_player,
                 'highlight_empty':self.highlight_empty_var.get(),
                 'video':self.video_browser.get_state(),
                 'audio':self.audio_browser.get_state(),
@@ -1162,6 +1192,17 @@ class SceneSlateApp:
         canvas.pack(side='left', fill='both', expand=True)
         scroll.pack(side='right', fill='y')
         checks = {}
+        buttons=[]
+        def focus_item(index):
+            if not buttons:return 'break'
+            index=max(0,min(len(buttons)-1,index))
+            btn=buttons[index];btn.focus_set()
+            canvas.update_idletasks()
+            total=max(1,body.winfo_reqheight());top=canvas.canvasy(0);y=btn.winfo_y()
+            if y<top:canvas.yview_moveto(y/total)
+            elif y+btn.winfo_height()>top+canvas.winfo_height():
+                canvas.yview_moveto((y+btn.winfo_height()-canvas.winfo_height())/total)
+            return 'break'
         for ref, node_kind, _node in core.iter_nodes(self.catalog, kind):
             if ref == current_ref:
                 continue
@@ -1174,7 +1215,14 @@ class SceneSlateApp:
                 label = self._target_text(int(parts[1]), int(parts[2]), parts[3])
             var = tk.BooleanVar(value=ref in linked)
             checks[ref] = var
-            ttk.Checkbutton(body, text=label, variable=var).pack(anchor='w', fill='x', padx=8, pady=3)
+            btn=ttk.Checkbutton(body,text=label,variable=var)
+            btn.pack(anchor='w',fill='x',padx=8,pady=3)
+            i=len(buttons);buttons.append(btn)
+            btn.bind('<Up>',lambda e,i=i:focus_item(i-1))
+            btn.bind('<Down>',lambda e,i=i:focus_item(i+1))
+            btn.bind('<Home>',lambda e:focus_item(0))
+            btn.bind('<End>',lambda e:focus_item(len(buttons)-1))
+        win.after_idle(lambda:focus_item(0))
         def apply_links():
             chosen = [ref for ref, var in checks.items() if var.get()]
             self.commit_notes()
@@ -1283,8 +1331,8 @@ class SceneSlateApp:
             tags=('empty_scene',) if empty and self.highlight_empty_var.get() else ('sync_bad',) if status in ('KO','REVIEW') else ('scene',)
             link_mark = self._linked_suffix(scene['number'])
             self.scene_tree.insert('','end',iid=sid,
-                text=self.tr(f"{sym}  {core.label(self.catalog,scene['number'])}    ({len(scene['shots'])} shot · {videos}V / {audios}A)")+link_mark,
-                values=(self._sync_label(status),),tags=tags,open=True)
+                text=f"{sym} {str(scene['number']).zfill(self.catalog['settings']['padding'])}",
+                values=("", "", f"{videos}V / {audios}A"+link_mark,self._sync_label(status)),tags=tags,open=True)
             self._remember_link_tooltip(sid,scene['number'])
             for sh,subs in visible:
                 all_shot=self._all_takes(sh)
@@ -1298,8 +1346,8 @@ class SceneSlateApp:
                 padding=self.catalog['settings']['padding']
                 link_mark = self._linked_suffix(scene['number'],sh['number'])
                 self.scene_tree.insert(sid,'end',iid=tid,
-                    text=self.tr(f"{prefix}{self.catalog['settings']['shot_label']} {str(sh['number']).zfill(padding)}    {v} video / {a} audio")+link_mark,
-                    values=(self._sync_label(status),),tags=tag,open=True)
+                    text=str(scene['number']).zfill(padding),
+                    values=(str(sh['number']).zfill(padding), "", f"{v}V / {a}A"+link_mark,self._sync_label(status)),tags=tag,open=True)
                 self._remember_link_tooltip(tid,scene['number'],sh['number'])
                 for sub in subs:
                     status=scene_sync.node_status(sub['takes'])
@@ -1311,8 +1359,8 @@ class SceneSlateApp:
                     tag=('empty_subshot',) if sub_empty and self.highlight_empty_var.get() else ('sync_bad',) if status in ('KO','REVIEW') else ('subshot',)
                     link_mark = self._linked_suffix(scene['number'],sh['number'],sub['id'])
                     self.scene_tree.insert(tid,'end',iid=uid,
-                        text=f"{prefix}{sub['name']}    {vid}V / {aud}A"+link_mark,
-                        values=(self._sync_label(status),),tags=tag)
+                        text=str(scene['number']).zfill(padding),
+                        values=(str(sh['number']).zfill(padding),sub['name'],f"{vid}V / {aud}A"+link_mark,self._sync_label(status)),tags=tag)
                     self._remember_link_tooltip(uid,scene['number'],sh['number'],sub['id'])
         if select and self.scene_tree.exists(select):
             self.scene_tree.selection_set(select);self.scene_tree.see(select)
@@ -1379,7 +1427,7 @@ class SceneSlateApp:
                      'paired' if v and a else 'unpaired')
                 self.media_tree.insert('','end',iid=str(t['number']),
                          values=(str(t['number'])+(' *' if t.get('manual_number') else ''),
-                                 fmt(v,VIDEO),v['quality'] if v else '—',fmt(a,AUDIO),a['quality'] if a else '—',
+                                 fmt(v,VIDEO),self.rating_code(v['quality']) if v else '—',fmt(a,AUDIO),self.rating_code(a['quality']) if a else '—',
                                  self._sync_label(scene_sync.effective_status(t))),
                          tags=(tag,))
             if select_take is not None and self.media_tree.exists(str(select_take)):
@@ -1649,7 +1697,7 @@ class SceneSlateApp:
         self.snapshot();media['quality']=quality
         self._propagate_related_links(target[0], target[1], self.selected_subshot_id())
         self.refresh_scene_tree(self.last_tree_selection);self.changed()
-        self.notice(f'Ciak {num} · {self.active_side}: {quality} = {core.QUALITIES[quality]}.')
+        self.notice(f'Ciak {num} · {self.active_side}: {self.rating_code(quality)} = {self.rating_name(quality)}.')
         return 'break'
 
     def remove_media(self):
@@ -1665,6 +1713,50 @@ class SceneSlateApp:
         self.refresh_scene_tree(self.last_tree_selection);self.changed()
         self.notice('Collegamento eliminato; nessun file originale modificato.')
 
+    def rating_code(self,quality):
+        return {'B':'G','R':'R','S':'X'}[quality] if self.language=='en' else quality
+
+    def rating_name(self,quality):
+        return {'B':'Good','R':'Reserve','S':'Reject'}[quality] if self.language=='en' else core.QUALITIES[quality]
+
+    def refresh_rating_labels(self):
+        codes='/'.join(self.rating_code(q) for q in ('B','R','S'))
+        for col in ('vq','aq'):self.media_tree.heading(col,text=codes)
+        for q,btn in self.rating_buttons.items():btn.configure(text=f'{self.rating_code(q)} · {self.rating_name(q)}')
+
+    def rating_shortcut(self,event):
+        mapping={self.rating_code(q).lower():q for q in ('B','R','S')}
+        key=event.keysym.lower()
+        if key in mapping:return self.set_quality(mapping[key])
+
+    def choose_video_player(self):
+        path=filedialog.askopenfilename(parent=self.root,title=self.tr('Choose video player executable'),
+                filetypes=[('Programs','*.exe'),('All files','*.*')] if sys.platform=='win32' else [('All files','*')])
+        if path:
+            self.video_player=str(Path(path).resolve());self.queue_save_session()
+            self.notice(self.tr('Video player:')+' '+self.video_player)
+
+    def reset_video_player(self):
+        self.video_player='';self.queue_save_session();self.notice('System video player selected.')
+
+    def play_selected_video(self,event=None):
+        target=self.active_shot(quiet=True);num=self.selected_take()
+        if target and num is not None:
+            take=core.take_for(self.catalog,*target,num,self.selected_subshot_id())
+            if take and take.get('video'):self.launch_media(take['video']['path'],VIDEO)
+        return 'break'
+
+    def launch_media(self,path,kind):
+        p=str(path)
+        if not Path(p).is_file():messagebox.showerror('File non trovato',p,parent=self.root);return
+        try:
+            if kind==VIDEO and self.video_player:
+                subprocess.Popen([self.video_player,p],shell=False)
+            elif sys.platform=='win32':os.startfile(p)
+            elif sys.platform=='darwin':subprocess.Popen(['open',p])
+            else:subprocess.Popen(['xdg-open',p])
+        except (OSError,AttributeError) as exc:messagebox.showwarning('Impossibile aprire',str(exc),parent=self.root)
+
     def open_media(self,event=None):
         target=self.active_shot(quiet=True);num=self.selected_take()
         if not target or num is None:return
@@ -1677,13 +1769,7 @@ class SceneSlateApp:
         media=take[self.active_side] if take else None
         self.render_takes(select_take=num)
         if not media:return
-        p=media['path']
-        if not Path(p).is_file():messagebox.showerror('File non trovato',p,parent=self.root);return
-        try:
-            if sys.platform=='win32':os.startfile(p)
-            elif sys.platform=='darwin':subprocess.Popen(['open',p])
-            else:subprocess.Popen(['xdg-open',p])
-        except (OSError,AttributeError) as exc:messagebox.showwarning('Impossibile aprire',str(exc),parent=self.root)
+        self.launch_media(media['path'],self.active_side)
 
     def update_media_actions(self,event=None):pass
 
@@ -1847,7 +1933,7 @@ class SceneSlateApp:
                 if selected is not None and t is not selected:continue
                 status=scene_sync.effective_status(t)
                 old_method=(t.get('sync') or {}).get('method', 'waveform')
-                upgrade=old_method not in ('manual','multistage_waveform_v2')
+                upgrade=status in ('REVIEW','KO') and old_method not in ('manual',scene_sync.METHOD)
                 if retry or status=='PENDING' or upgrade:
                     if retry or upgrade:t['sync']=None
                     self._sync_worker.submit(t['video']['path'],t['audio']['path'])

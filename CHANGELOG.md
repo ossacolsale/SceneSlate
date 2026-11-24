@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.10.0 — Faster navigation and spectral evidence
+
+- Persistent custom video player, quick preview shortcuts, Space playback toggle, localized rating codes and shortcuts.
+- Explicit scene/shot/sub-shot hierarchy columns, keyboard-scrollable link selector, compact app and README logo.
+- Add spectral-change correlation and conservative consensus rescue of REVIEW results; preserve prior OK/manual results.
+
+
 ## 3.9.0 — Playback playhead, sub-shot routing and icon verification
 
 - Moving playback cursor and auto-scrolling waveform timeline in the manual Sync Editor, with bounded asynchronous waveform reload beyond the initial audio window; seeking stops the old playback.

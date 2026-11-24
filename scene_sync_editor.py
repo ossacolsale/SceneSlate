@@ -226,6 +226,14 @@ class SyncEditor:
         if suggested is not None:
             ttk.Button(foot,text=self.tr('Reset to suggested offset'),command=lambda:self._set_offset(float(suggested))).pack(side='left',padx=4)
 
+        # Bind before ttk class handling so focused buttons do not double-toggle.
+        def bind_space(widget):
+            if not isinstance(widget,(ttk.Entry,tk.Entry,ttk.Combobox)):
+                widget.bind('<KeyPress-space>',self.toggle_playback)
+                widget.bind('<KeyRelease-space>',lambda e:'break')
+            for child in widget.winfo_children():bind_space(child)
+        bind_space(self.win)
+
     def _schedule_job(self,kind,func):
         def work():
             try:self.queue.put((kind,True,func()))
@@ -555,6 +563,14 @@ class SyncEditor:
                                duration=seconds,mode=mode)
             return serial,path,seconds
         self._schedule_job('preview',work)
+
+    def toggle_playback(self,event=None):
+        # Do not interfere with text editing or a focused button's own Space action.
+        if event is not None and isinstance(event.widget,(ttk.Entry,tk.Entry,ttk.Combobox)):
+            return
+        if self.play_active:self.stop()
+        else:self.play()
+        return 'break'
 
     def play(self):
         self._parse_offset()

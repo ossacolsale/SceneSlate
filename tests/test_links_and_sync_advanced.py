@@ -102,7 +102,7 @@ class AdvancedSyncMediaTests(unittest.TestCase):
         self.assertEqual(result['status'],'OK',result)
         self.assertAlmostEqual(result['offset_seconds'],offset,delta=.005)
         self.assertGreaterEqual(result['windows_verified'],3)
-        self.assertEqual(result['method'],'multistage_waveform_v2')
+        self.assertEqual(result['method'],sync.METHOD)
         self.assertLess(result['window_spread_ms'],8)
 
     def test_unrelated_track_is_not_automatically_ok(self):

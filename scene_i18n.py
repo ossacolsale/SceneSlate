@@ -60,10 +60,10 @@ Ciak|||Take
 AUDIO →|||AUDIO →
 − File sul lato|||− File on selected side
 Qualifica lato attivo:|||Selected side rating:
-B · Buona|||B · Good
+B · Buona|||G · Good
 R · Riserva|||R · Reserve
-S · Scarto|||S · Reject
-←/→ sceglie VIDEO o AUDIO; ↑/↓ sceglie il ciak; B/R/S cambia la qualifica. Trascina un file sulla riga per abbinarlo.|||←/→ selects VIDEO or AUDIO; ↑/↓ selects the take; B/R/S changes its rating. Drop a file onto a row to pair it.
+S · Scarto|||X · Reject
+←/→ sceglie VIDEO o AUDIO; ↑/↓ sceglie il ciak; B/R/S cambia la qualifica. F4: riproduci video. Trascina un file sulla riga per abbinarlo.|||←/→ selects VIDEO or AUDIO; ↑/↓ selects the take; G/R/X changes its rating. F4: play video. Drop a file onto a row to pair it.
 Descrizione ciak:|||Take description:
 Annotazioni ciak:|||Take notes:
 Descrizione scena:|||Scene description:
@@ -102,7 +102,7 @@ Seleziona cartella |||Choose folder
 Associa allo shot|||Attach to shot
 Seleziona uno o più file, poi usa “Associa allo shot”.|||Select one or more files and then use “Attach to shot”.
 Rilascia i file su uno shot o direttamente sulla riga di ciak da completare.|||Drop files onto a shot or a take row to complete the pair.
-Seleziona una riga ciak e usa ←/→ per scegliere il lato prima di B/R/S.|||Select a take row, then use ←/→ to choose a side before B/R/S.
+Seleziona una riga ciak e usa ←/→ per scegliere il lato prima di B/R/S.|||Select a take row, then use ←/→ to choose a side before G/R/X.
 Nessun file su questo lato.|||No file on this side.
 Collegamento eliminato; nessun file originale modificato.|||Attachment removed; no original media changed.
 Numero ciak ripristinato alla sequenza automatica di inserimento.|||Take number reset to the automatic insertion sequence.
@@ -177,9 +177,9 @@ Impossibile aprire|||Cannot open
 Scena già presente.|||Scene already exists.
 Shot già presente.|||Shot already exists.
 Alcuni file non associati|||Some unpaired files
-B · Buona|||B · Good
+B · Buona|||G · Good
 R · Riserva|||R · Reserve
-S · Scarto|||S · Reject
+S · Scarto|||X · Reject
 CIAK|||TAKES
  / CIAK||| / TAKES
  ciak · trascina i file su una riga per abbinarli.||| takes · drop files onto a row to pair them.
@@ -326,6 +326,14 @@ EN_TO_IT.update({
     'Cannot update links': 'Impossibile aggiornare i collegamenti',
     'Apply': 'Applica',
     'Select a scene, shot or sub-shot first.': 'Seleziona prima una scena, uno shot o un sotto-shot.',
+})
+
+
+EN_TO_IT.update({
+    'Play selected video (F4)':'Riproduci video selezionato (F4)', 'Video player…':'Lettore video…', 'Use system video player':'Usa lettore video di sistema',
+    'Choose video player executable':'Scegli eseguibile del lettore video',
+    'Video player:':'Lettore video:', 'System video player selected.':'Lettore video di sistema selezionato.',
+    'Media / links':'Media / collegamenti', 'Sub-shot':'Sotto-shot', 'Scene':'Scena',
 })
 
 

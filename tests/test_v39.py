@@ -89,7 +89,7 @@ class Gui39Tests(unittest.TestCase):
             core.add_shot(app.catalog,n,1)
         core.configure_links(app.catalog,1,member_refs=[core.node_ref(i) for i in (2,3,4,5)])
         app.refresh_scene_tree()
-        row=app.scene_tree.item('s:1','text')
+        row=app.scene_tree.set('s:1','info')
         self.assertLess(row.index('0V / 0A'),row.index('⇄'))
         for n in (2,3,4,5):
             self.assertIn(f'Scene {n}',row)

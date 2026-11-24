@@ -18,6 +18,7 @@ SAMPLE_RATE = 800
 MAX_SECONDS = 90
 MAX_OFFSET_SECONDS = 60
 MIN_OVERLAP_SECONDS = 8
+METHOD = 'multistage_waveform_v3'
 SYNC_STATUSES = {'OK','REVIEW','KO','PENDING'}
 
 
@@ -456,7 +457,65 @@ def _fine_candidate(video, audio, offset, rate=FINE_RATE):
             'precision_ms':1000/rate,
             'phat_ok':phat_ok,
             'consensus_windows':len(agree),
-            'strong_unique_windows':unique_peaks}
+            'strong_unique_windows':unique_peaks,
+            'temporal_span':max(w.get('start',0.) for w in agree)-min(w.get('start',0.) for w in agree),
+            'outliers':len(outliers)}
+
+
+def spectral_lags(video, audio, rate=FINE_RATE, max_offset_seconds=MAX_OFFSET_SECONDS):
+    """Signed, overlap-normalized correlation of multiband spectral changes.
+
+    Independent of waveform polarity and mostly invariant to fixed microphone EQ.
+    Returns (score, seconds), without a statistical probability interpretation.
+    Inspired by audio feature cross-correlation and landmark alignment literature.
+    """
+    try:
+        import numpy as np
+    except ImportError:
+        return []
+    hop=max(1,rate//100); size=512
+    def features(samples):
+        x=np.asarray(samples,dtype=np.float32)
+        if len(x)<size:return np.empty((0,12))
+        frames=np.lib.stride_tricks.sliding_window_view(x,size)[::hop]
+        power=np.abs(np.fft.rfft(frames*np.hanning(size),axis=1))**2
+        freqs=np.fft.rfftfreq(size,1/rate)
+        edges=(100,180,300,480,750,1150,1700,2400,3400)
+        bands=[]
+        for low,high in zip(edges,edges[1:]):
+            val=np.mean(power[:,(freqs>=low)&(freqs<high)],axis=1)
+            floor=max(float(np.percentile(val,15))*.25,1e-8)
+            log=np.log(val+floor)
+            # Temporal difference rejects stationary noise and fixed EQ;
+            # slower difference complements short onset changes.
+            for step in (1,4):
+                d=log[4:]-log[4-step:len(log)-step]
+                scale=max(float(np.std(d)),.1)
+                d=np.clip(d/scale,-4,4)
+                bands.append(d-np.mean(d))
+        return np.asarray(bands,dtype=np.float64).T
+    v,a=features(video),features(audio)
+    nv,na=len(v),len(a); fps=rate/hop
+    minimum=int(5*fps)
+    if min(nv,na)<minimum:return []
+    n=1<<(nv+na-2).bit_length()
+    corr=np.fft.irfft(np.sum(np.fft.rfft(a,n,axis=0)*np.conj(np.fft.rfft(v,n,axis=0)),axis=1),n)
+    vp=np.r_[0.,np.cumsum(np.sum(v*v,axis=1))];ap=np.r_[0.,np.cumsum(np.sum(a*a,axis=1))]
+    lags=np.arange(-int(max_offset_seconds*fps),int(max_offset_seconds*fps)+1)
+    vi=np.maximum(0,-lags);ai=np.maximum(0,lags);length=np.minimum(nv-vi,na-ai)
+    good=length>=minimum;lags,vi,ai,length=[x[good] for x in (lags,vi,ai,length)]
+    ev=vp[vi+length]-vp[vi];ea=ap[ai+length]-ap[ai]
+    score=corr[lags%n]/np.sqrt(np.maximum(ev*ea,1e-20))
+    # Require more than a small set of energetic onset frames.
+    good=(ev>length*.1)&(ea>length*.1)
+    return [(float(x),float(y/fps)) for x,y in zip(score[good],lags[good])]
+
+
+def spectral_evidence(scores, offset):
+    if not scores:return 0.,0.
+    local=max((score for score,lag in scores if abs(lag-offset)<=.035),default=0.)
+    rival=max((score for score,lag in scores if abs(lag-offset)>.09),default=0.)
+    return local,local-rival
 
 
 def robust_align(video_coarse, audio_coarse, video_fine, audio_fine,
@@ -468,6 +527,13 @@ def robust_align(video_coarse, audio_coarse, video_fine, audio_fine,
     """
     if candidates is None:
         candidates=coarse_candidates(video_coarse,audio_coarse,max_offset_seconds)
+    candidates=[dict(c) for c in candidates]
+    spectral=spectral_lags(video_fine,audio_fine,max_offset_seconds=max_offset_seconds)
+    for strength,lag in _peak_candidates(spectral,count=3,separation=.12):
+        if strength<.13:continue
+        existing=next((c for c in candidates if abs(c['offset']-lag)<.10),None)
+        if existing is None:candidates.append({'offset':lag,'spectral':strength})
+        else:existing['spectral']=strength
     if not candidates:
         return {'status':'KO','offset':None,'score':0.,'error':'No usable coarse match'}
     results=[]
@@ -477,7 +543,15 @@ def robust_align(video_coarse, audio_coarse, video_fine, audio_fine,
             fine['coarse_offset']=candidate['offset']
             fine['coarse_score']=max(candidate.get('waveform',0.),candidate.get('envelope',0.))
             # Reject coincidences that were never supported by the long signal.
-            fine['ranking']=fine['score']*0.75+fine['coarse_score']*0.25+min(fine['valid'],4)*.005
+            sp,margin=spectral_evidence(spectral,fine['offset'])
+            fine['spectral_score']=sp;fine['spectral_margin']=margin
+            fine['ranking']=fine['score']*.65+fine['coarse_score']*.20+max(0.,sp)*.15+min(fine['valid'],4)*.005
+            # A second, globally unique spectral cue can rescue a weak waveform
+            # decision, but only with precise independent fine-window agreement.
+            if (fine['status']=='REVIEW' and fine['valid']>=3 and fine.get('spread_ms',999)<=8
+                and fine['score']>=.12 and sp>=.28 and margin>=.13
+                and fine.get('strong_unique_windows',0)>=2 and fine.get('temporal_span',0)>=2.4 and not fine.get('outliers',0)):
+                fine['status']='OK';fine['error']=''
             results.append(fine)
     if not results:
         return {'status':'KO','offset':None,'score':0.,'error':'No coherent multiresolution match'}
@@ -486,7 +560,7 @@ def robust_align(video_coarse, audio_coarse, video_fine, audio_fine,
     # Matches at different lags must be clearly weaker. Otherwise repeated
     # dialogue/music makes confident automatic synchronization inappropriate.
     competing=next((item for item in results[1:] if abs(item['offset']-best['offset'])>.035),None)
-    if competing and best['ranking']-competing['ranking']<.07:
+    if competing and best['ranking']-competing['ranking']<.07 and not (best.get('spectral_score',0)>=.32 and best.get('spectral_margin',0)>=.16 and best['valid']>=3 and best.get('spread_ms',999)<=8 and abs(best['offset']-competing['offset'])>.09 and not best.get('outliers',0)):
         best['status']='REVIEW'
         best['error']='Several plausible offsets; manual review recommended'
     best['offset']=round(best['offset'],6)
@@ -508,9 +582,6 @@ def synchronize(video_path,audio_path):
         v=extract_audio(video_path,ffmpeg)
         a=extract_audio(audio_path,ffmpeg)
         candidates=coarse_candidates(v,a)
-        if not candidates:
-            return sync_record('KO',error='No usable coarse match',score=0.,signature=signature,
-                               method='multistage_waveform_v2')
         vf=extract_audio(video_path,ffmpeg,seconds=MAX_SECONDS,rate=FINE_RATE,
                          highpass=110,lowpass=3400)
         af=extract_audio(audio_path,ffmpeg,seconds=MAX_SECONDS,rate=FINE_RATE,
@@ -519,15 +590,17 @@ def synchronize(video_path,audio_path):
         status=refined['status']
         record=sync_record(status,offset_seconds=refined.get('offset'),
                            score=refined.get('score'),error=refined.get('error',''),
-                           signature=signature, method='multistage_waveform_v2')
+                           signature=signature, method=METHOD)
         record['offset_resolution_ms']=refined.get('precision_ms')
         record['window_spread_ms']=refined.get('spread_ms')
         record['windows_verified']=refined.get('valid',0)
         record['coarse_offset_seconds']=refined.get('coarse_offset')
         record['coarse_score']=refined.get('coarse_score')
         record['candidate_count']=len(candidates)
+        record['spectral_score']=refined.get('spectral_score')
+        record['spectral_margin']=refined.get('spectral_margin')
         record['note']='Resolution is not accuracy. Validate important takes by ear; XML export rounds to timeline frames.'
         return record
     except (OSError,ValueError,RuntimeError,subprocess.TimeoutExpired) as exc:
         return sync_record('KO',error=str(exc),signature=signature,
-                           method='multistage_waveform_v2')
+                           method=METHOD)

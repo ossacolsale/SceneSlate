@@ -30,9 +30,9 @@ class SyncGuiTests(unittest.TestCase):
                             offset_seconds=0 if i==1 else None,score=.85 if i==1 else .01,
                             signature=scene_sync.fingerprint(video,audio))
                 app.refresh_scene_tree()
-                self.assertEqual(app.scene_tree.item('s:1','values'),('✓ OK',))
-                self.assertEqual(app.scene_tree.item('s:2','values'),('✕ KO',))
-                self.assertEqual(app.scene_tree.item('s:3','values'),('— SINGLE',))
+                self.assertEqual(app.scene_tree.set('s:1','sync'),'✓ OK')
+                self.assertEqual(app.scene_tree.set('s:2','sync'),'✕ KO')
+                self.assertEqual(app.scene_tree.set('s:3','sync'),'— SINGLE')
                 app.only_unsynced_var.set(True)
                 app.scene_filter_changed()
                 self.assertFalse(app.scene_tree.exists('s:1'))
