@@ -991,3 +991,34 @@ def export_all(c,directory,modes=('csv',),fps=None):
                 'XML is an editable timeline, not a native Media Pool sync clip. '
                 'Original media remains unmodified.\n')
     return count,warnings
+
+
+def media_assignments(c, path, kind):
+    """Occurrences of one exact source, grouped by effective link membership."""
+    groups=[]
+    for scene,shot,sub,take,side,media in iter_media_context(c):
+        if side!=kind or identity(media['path'])!=identity(path):
+            continue
+        n,h=scene['number'],shot['number']
+        u=sub['id'] if sub else None
+        name=sub['name'].casefold() if sub else None
+        num=take['number']
+        keys=set()
+        if scene.get('link_group'):
+            keys.add(('scene',scene['link_group'],h,name,num))
+        if shot.get('link_group'):
+            keys.add(('shot',shot['link_group'],name,num))
+        if sub and sub.get('link_group'):
+            keys.add(('subshot',sub['link_group'],num))
+        items=[{'target':(n,h,u,num),'label':label(c,n,h,sub['name'] if sub else None)}]
+        remaining=[]
+        for group in groups:
+            if keys & group['keys']:
+                keys.update(group['keys']);items.extend(group['items'])
+            else:
+                remaining.append(group)
+        remaining.append({'keys':keys,'items':items})
+        groups=remaining
+    for group in groups:
+        group['items'].sort(key=lambda item:(item['target'][0],item['target'][1],item['label'],item['target'][3]))
+    return sorted(groups,key=lambda g:g['items'][0]['target'][:2])

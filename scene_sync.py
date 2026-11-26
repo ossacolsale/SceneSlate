@@ -18,7 +18,7 @@ SAMPLE_RATE = 800
 MAX_SECONDS = 90
 MAX_OFFSET_SECONDS = 60
 MIN_OVERLAP_SECONDS = 8
-METHOD = 'multistage_waveform_v4'
+METHOD = 'multistage_waveform_v5'
 SYNC_STATUSES = {'OK','REVIEW','KO','PENDING'}
 
 
@@ -416,6 +416,19 @@ def _fine_candidate(video, audio, offset, rate=FINE_RATE):
         starts.append(max(choices,key=energy))
     windows=[_fine_window(video,audio,offset,start,rate=rate) for start in starts]
     windows=[w for w in windows if w is not None and w['score']>=.085]
+    # Retry sparse evidence in shorter windows to avoid speech pauses.
+    if len(windows)<2 and remaining>0.5:
+        duration=max(.65,min(1.2,FINE_WINDOW_SECONDS/2))
+        available=overlap_end-overlap_start-duration
+        if available>duration:
+            for i in range(5):
+                start=overlap_start+available*i/4
+                w=_fine_window(video,audio,offset,start,seconds=duration,rate=rate)
+                if w and w['score']>=.12:windows.append(w)
+            retained=[]
+            for w in sorted(windows,key=lambda x:x['score'],reverse=True):
+                if all(abs(w['start']-q['start'])>=duration for q in retained):retained.append(w)
+            windows=retained
     if len(windows) < 2:
         return None
     values=sorted(w['offset'] for w in windows)
@@ -578,7 +591,20 @@ def robust_align(video_coarse, audio_coarse, video_fine, audio_fine,
                 and fine.get('temporal_span',0)>=2.4
                 and fine.get('outlier_score',1 if fine.get('outliers') else 0)<.16
                 and fine.get('inlier_polarity_consistent',True))
-            if fine['status']=='REVIEW' and ((global_unique and plausible) or spectral_rescue):
+            # Global uniqueness and tight, temporally separated evidence can
+            # override a PHAT veto or a weak contradictory window.
+            corroborated=(fine['valid']>=2 and fine.get('spread_ms',999)<=10
+                and fine.get('temporal_span',0)>=1.2 and fine['score']>=.10
+                and sp>=.24 and margin>=.10
+                and fine.get('outlier_score',1 if fine.get('outliers') else 0)<max(.18,fine['score']*.80)
+                and fine.get('inlier_polarity_consistent',True))
+            waveform_rescue=(fine['valid']>=2 and fine.get('spread_ms',999)<=6
+                and fine.get('temporal_span',0)>=1.2 and fine['score']>=.20
+                and fine.get('strong_unique_windows',0)>=2
+                and wave>=.24 and wave-rival_wave>=.10
+                and fine.get('outlier_score',1 if fine.get('outliers') else 0)<.16
+                and fine.get('inlier_polarity_consistent',True))
+            if fine['status']=='REVIEW' and ((global_unique and plausible) or spectral_rescue or corroborated or waveform_rescue):
                 fine['status']='OK';fine['error']='';fine['decision']='global corroboration'
             results.append(fine)
     if not results:
@@ -588,7 +614,7 @@ def robust_align(video_coarse, audio_coarse, video_fine, audio_fine,
     # Matches at different lags must be clearly weaker. Otherwise repeated
     # dialogue/music makes confident automatic synchronization inappropriate.
     competing=next((item for item in results[1:] if abs(item['offset']-best['offset'])>.035),None)
-    if competing and best['ranking']-competing['ranking']<.07 and not (best.get('spectral_score',0)>=.32 and best.get('spectral_margin',0)>=.16 and best['valid']>=3 and best.get('spread_ms',999)<=8 and abs(best['offset']-competing['offset'])>.09 and not best.get('outliers',0)):
+    if competing and best['ranking']-competing['ranking']<.055 and not (best.get('spectral_score',0)>=.28 and best.get('spectral_margin',0)>=.12 and best['valid']>=2 and best.get('spread_ms',999)<=8 and abs(best['offset']-competing['offset'])>.09 and best.get('outlier_score',1 if best.get('outliers') else 0)<.16):
         best['status']='REVIEW'
         best['error']='Several plausible offsets; manual review recommended'
     best['offset']=round(best['offset'],6)

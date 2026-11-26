@@ -362,6 +362,7 @@ class SyncEditor:
                         self.info.set(self.tr('Waveform loading failed:')+' '+str(value))
                 elif kind=='preview':
                     if not ok:
+                        self.stop()
                         self.info.set(self.tr('Preview failed:')+' '+str(value))
                         continue
                     serial,path,seconds=value
@@ -399,7 +400,9 @@ class SyncEditor:
 
     def _parse_offset(self,event=None):
         try:
-            value=float(self.offset_var.get().replace(',','.'))
+            raw=self.offset_var.get().replace(',','.')
+            if raw==f'{self.offset:+.3f}':return
+            value=float(raw)
             if not math.isfinite(value) or abs(value)>86400:raise ValueError
         except ValueError:
             self.offset_var.set(f'{self.offset:+.3f}')
@@ -588,9 +591,6 @@ class SyncEditor:
     def confirm(self):
         self._parse_offset()
         if not math.isfinite(self.offset):return
-        if not messagebox.askyesno(self.tr('Confirm manual alignment'),
-                self.tr('Save this offset as manually verified? Confirm only after listening to both tracks.'),
-                parent=self.win):return
         try:self.on_approve(self.offset)
         except Exception as exc:
             messagebox.showerror(self.tr('Failed to save alignment'),str(exc),parent=self.win)
@@ -608,3 +608,73 @@ class SyncEditor:
         # may still need the temporary directory, so cleanup is best-effort.
         try:self.tmp.cleanup()
         except OSError:pass
+
+
+class QuickSyncReview(SyncEditor):
+    """Three-action listening modal using the editor's bounded playback."""
+    def __init__(self,parent,video,audio,record,on_approve,on_edit,language='en'):
+        self.on_edit=on_edit
+        self.autoplay_started=False
+        super().__init__(parent,video,audio,record,on_approve,language=language)
+        self.win.title(self.tr('Quick sync review'))
+        self.win.minsize(500,210)
+        self.win.geometry('640x250')
+        self.win.bind('<Escape>',lambda e:self.close())
+
+    def _build(self):
+        frame=ttk.Frame(self.win,padding=16);frame.pack(fill='both',expand=True)
+        ttk.Label(frame,text=self.tr('Quick sync review'),font=('Segoe UI',15,'bold')).pack(anchor='w')
+        for title,path in [('Camera audio:',self.video),('External audio:',self.audio)]:
+            ttk.Label(frame,text=self.tr(title)+' '+Path(path).name,wraplength=580).pack(anchor='w',pady=2)
+        ttk.Label(frame,text=f"{self.tr('Suggested offset:')} {self.offset:+.6f} s").pack(anchor='w',pady=(4,0))
+        self.info=tk.StringVar(value=self.tr('Preparing listening preview…'))
+        ttk.Label(frame,textvariable=self.info,wraplength=580).pack(anchor='w',pady=4)
+        self.playhead_label=tk.StringVar(value='0.00 s')
+        ttk.Label(frame,textvariable=self.playhead_label).pack(anchor='w')
+        self.seek=ttk.Scale(frame)
+        self.listen_mode=tk.StringVar(value='split')
+        foot=ttk.Frame(frame);foot.pack(fill='x',side='bottom',pady=(8,0))
+        self.approve_button=ttk.Button(foot,text=self.tr('Confirm synchronization'),command=self.confirm,state='disabled')
+        self.approve_button.pack(side='left',padx=(0,5))
+        ttk.Button(foot,text=self.tr('Open sync editor'),command=self.open_editor).pack(side='left',padx=5)
+        ttk.Button(foot,text=self.tr('Close'),command=self.close).pack(side='right')
+
+    def _load_waveforms(self):
+        ffmpeg,ffprobe=scene_sync.executables()
+        if not ffmpeg or not ffprobe:raise RuntimeError('FFmpeg/ffprobe not available')
+        v=scene_sync.media_probe(self.video,ffprobe);a=scene_sync.media_probe(self.audio,ffprobe)
+        if not v['audio'] or not a['audio'] or float(v['duration'])<=0:
+            raise RuntimeError('Both files must contain an audio stream')
+        return (array.array('f'),array.array('f'),0.,float(v['duration']),float(a['duration']),0.)
+
+    def _poll(self):
+        super()._poll()
+        if self.closed:return
+        if not self.loading and self.wave_camera is not None and not self.autoplay_started:
+            self.autoplay_started=True
+            self.position=max(0.,-self.offset)
+            self.play()
+        if self.play_wall_started is not None:
+            self.approve_button.configure(state='normal')
+
+    def _parse_offset(self,event=None):
+        pass
+
+    def _request_wave_window(self):
+        pass
+
+    def draw(self):
+        pass
+
+    def _tick_playhead(self):
+        self.cursor_timer=None
+        if self.closed or not self.play_active:return
+        if self.play_wall_started is not None:
+            self.playhead_seconds=min(self.full_duration,self.play_chunk_start+
+                min(self.play_chunk_length,max(0.,time.monotonic()-self.play_wall_started)))
+        self.playhead_label.set(f'{self.playhead_seconds:.2f} / {self.full_duration:.2f} s')
+        self.cursor_timer=self.win.after(100,self._tick_playhead)
+
+    def open_editor(self):
+        self.close()
+        self.parent.after_idle(self.on_edit)

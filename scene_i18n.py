@@ -345,6 +345,26 @@ EN_TO_IT.update({
 })
 
 
+EN_TO_IT.update({
+    'Quick sync review':'Revisione rapida sync',
+    'Quick review (P)':'Revisione rapida (P)',
+    'Confirm synchronization':'Conferma sincronizzazione',
+    'Open sync editor':'Apri editor sincronizzazione',
+    'Close':'Chiudi',
+    'Suggested offset:':'Offset suggerito:',
+    'File assignments':'Abbinamenti del file',
+    'No assignments':'Nessun abbinamento',
+    'Linked group':'Gruppo collegato',
+    'Independent assignment':'Abbinamento indipendente',
+    'Take actions…':'Azioni ciak…',
+    'No suggested offset; open the sync editor.':'Nessun offset suggerito; apri l’editor di sincronizzazione.',
+    'Copy the selected node content (Ctrl+C).':'Copia il contenuto selezionato (Ctrl+C).',
+    'Paste into the selected node (Ctrl+V).':'Incolla nel nodo selezionato (Ctrl+V).',
+    'Select video/audio with Left/Right. Select take with Up/Down.':'Seleziona video/audio con sinistra/destra. Seleziona il ciak con su/giù.',
+    'Play proposed alignment immediately; confirm or open the editor (P).':'Ascolta subito l’allineamento proposto; conferma o apri l’editor (P).',
+    'Drag files onto a take to pair them.':'Trascina i file su un ciak per abbinarli.',
+})
+
 def translate(message, language='en'):
     """Translate application-owned UI strings; do not use on user text or filenames."""
     if not isinstance(message,str):
