@@ -1,10 +1,17 @@
-# SceneSlate 3.10.1
+# SceneSlate 3.11.0
 
 <img src="sceneslate_logo.png" alt="SceneSlate logo" width="180">
 
 SceneSlate is a **cross-platform footage catalog** written in Python 3 and Tkinter. Its interface is available in **English and Italian**. A new installation starts in **English**; change the language using the **Language / Lingua** selector in the top toolbar. The preference survives restarts and upgrades, and switching languages does **not** rename files, modify a catalog or reset the scene selection.
 
 Footage is organized as **scene → shot → optional sub-shot → take**. Every take has an optional video reference and an optional audio reference, each with independent ratings (`B` good, `R` reserve, `S` reject). Takes can have descriptions and annotations; scenes, shots and sub-shots have optional descriptions. **Original media files are never renamed, moved, deleted or duplicated.** When a video/audio pair is complete, SceneSlate attempts **background waveform synchronization** if FFmpeg is installed; the alignment metadata is stored per take, never written into the media.
+
+## 3.11.0 — Fast review and reverse navigation
+
+- Select a paired take and press **P** or **Quick review (P)** to hear the proposed offset immediately. Confirm directly, open the full editor, or close without changes. Approval in the full editor also saves without another confirmation dialog.
+- Right-click a file in either browser and open **File assignments**: linked occurrences share a group number, independent assignments are marked separately. Selecting an occurrence jumps to its exact scene, shot, sub-shot and take, with the correct media side active. Filters are cleared only when needed to reveal a hidden destination.
+- Less frequent take commands are in **Take actions…**; copy/paste buttons are compact and explanatory text is moved to hover hints.
+- Sync now checks independent frequency-band delay peaks and retries sparse matches in shorter windows. Additional acceptance paths require a tight, temporally separated consensus with a distinctive global match. Old automatic REVIEW/KO results are reprocessed; manually verified and existing valid OK offsets remain unchanged. Actual performance depends on source recordings; a score is not a probability.
 
 ## 3.10.1 — Playback and review fixes
 

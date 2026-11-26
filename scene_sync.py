@@ -362,6 +362,7 @@ def _fine_window(video, audio, offset, v_start, seconds=FINE_WINDOW_SECONDS,
             delta=max(-0.5,min(0.5,.5*(left-right)/denom))
     independent=max((s for i,s in enumerate(values) if abs(i-lag)>rate//125),default=0.)
     phat_agreement=None
+    band_votes=0
     try:
         import numpy as np
         vf=np.asarray(v_adjusted, dtype=np.float64)
@@ -375,6 +376,20 @@ def _fine_window(video, audio, offset, v_start, seconds=FINE_WINDOW_SECONDS,
         phat=np.abs(np.fft.irfft(weighted,n)[:2*margin+1])
         phat_lag=int(np.argmax(phat))
         phat_agreement=abs(phat_lag-lag)/rate
+        # Independent frequency bands must locate the same delay. Reject bands
+        # with negligible shared energy or a second comparable peak.
+        frequencies=np.fft.rfftfreq(n,1/rate)
+        for low,high in ((120,450),(450,1100),(1100,2300),(2300,3400)):
+            mask=(frequencies>=low)&(frequencies<high)
+            if not np.any(mask):continue
+            if (np.sum(np.abs(va[mask])**2)<1e-4*np.sum(np.abs(va)**2)
+                or np.sum(np.abs(aa[mask])**2)<1e-4*np.sum(np.abs(aa)**2)):continue
+            band=np.abs(np.fft.irfft(np.where(mask,weighted,0),n)[:2*margin+1])
+            peak=int(np.argmax(band));height=float(band[peak])
+            if height<=1e-12:continue
+            indices=np.arange(len(band))
+            rival=float(np.max(np.where(np.abs(indices-peak)>rate*.008,band,0)))
+            if abs(peak-lag)<=rate*.006 and rival<=height*.91:band_votes+=1
         if phat_agreement <= .008 and 0 < phat_lag < len(phat)-1:
             # Blend tiny adjustments only when both independent cues agree.
             lag=lag*.8+phat_lag*.2
@@ -383,7 +398,7 @@ def _fine_window(video, audio, offset, v_start, seconds=FINE_WINDOW_SECONDS,
     aligned_offset=(a_start+lag+delta-v_index)/rate
     return {'offset':aligned_offset,'score':min(1.,score),
             'peak_gap':score-independent,'phat_disagreement_s':phat_agreement,
-            'start':v_start,'polarity':-1 if polarity < 0 else 1}
+            'start':v_start,'band_votes':band_votes,'polarity':-1 if polarity < 0 else 1}
 
 
 def _fine_candidate(video, audio, offset, rate=FINE_RATE):
@@ -475,6 +490,7 @@ def _fine_candidate(video, audio, offset, rate=FINE_RATE):
             'phat_ok':phat_ok,
             'consensus_windows':len(agree),
             'strong_unique_windows':unique_peaks,
+            'multiband_windows':sum(w.get('band_votes',0)>=2 for w in agree),
             'temporal_span':max(w.get('start',0.) for w in agree)-min(w.get('start',0.) for w in agree),
             'outliers':len(outliers),
             'outlier_score':max((w['score'] for w in outliers),default=0.),
@@ -604,7 +620,13 @@ def robust_align(video_coarse, audio_coarse, video_fine, audio_fine,
                 and wave>=.24 and wave-rival_wave>=.10
                 and fine.get('outlier_score',1 if fine.get('outliers') else 0)<.16
                 and fine.get('inlier_polarity_consistent',True))
-            if fine['status']=='REVIEW' and ((global_unique and plausible) or spectral_rescue or corroborated or waveform_rescue):
+            band_rescue=(fine['valid']>=2 and fine.get('multiband_windows',0)>=2
+                and fine.get('spread_ms',999)<=8 and fine.get('temporal_span',0)>=1.2
+                and fine['score']>=.11 and ((sp>=.17 and margin>=.065)
+                    or (wave>=.19 and wave-rival_wave>=.09))
+                and fine.get('outlier_score',1 if fine.get('outliers') else 0)<.18
+                and fine.get('inlier_polarity_consistent',True))
+            if fine['status']=='REVIEW' and ((global_unique and plausible) or spectral_rescue or corroborated or waveform_rescue or band_rescue):
                 fine['status']='OK';fine['error']='';fine['decision']='global corroboration'
             results.append(fine)
     if not results:
@@ -653,6 +675,8 @@ def synchronize(video_path,audio_path):
         record['candidate_count']=len(candidates)
         record['spectral_score']=refined.get('spectral_score')
         record['spectral_margin']=refined.get('spectral_margin')
+        record['multiband_windows']=refined.get('multiband_windows',0)
+        record['decision']=refined.get('decision','')
         record['decision']=refined.get('decision','local consensus')
         record['window_outliers']=refined.get('outliers',0)
         record['note']='Resolution is not accuracy. Validate important takes by ear; XML export rounds to timeline frames.'

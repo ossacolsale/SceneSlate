@@ -620,6 +620,7 @@ class QuickSyncReview(SyncEditor):
         self.win.minsize(500,210)
         self.win.geometry('640x250')
         self.win.bind('<Escape>',lambda e:self.close())
+        self.win.bind('<space>',self.toggle_playback)
 
     def _build(self):
         frame=ttk.Frame(self.win,padding=16);frame.pack(fill='both',expand=True)
@@ -653,7 +654,8 @@ class QuickSyncReview(SyncEditor):
         if not self.loading and self.wave_camera is not None and not self.autoplay_started:
             self.autoplay_started=True
             self.position=max(0.,-self.offset)
-            self.play()
+            if self.position<min(self.full_duration,self.external_duration-self.offset):self.play()
+            else:self.info.set(self.tr('No overlapping audio to preview.'))
         if self.play_wall_started is not None:
             self.approve_button.configure(state='normal')
 

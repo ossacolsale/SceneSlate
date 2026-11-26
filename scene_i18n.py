@@ -353,6 +353,8 @@ EN_TO_IT.update({
     'Close':'Chiudi',
     'Suggested offset:':'Offset suggerito:',
     'File assignments':'Abbinamenti del file',
+    'No overlapping audio to preview.':'Nessuna sovrapposizione audio da ascoltare.',
+    'Select video/audio with Left/Right. Select take with Up/Down. Drag files onto a take to pair them.':'Seleziona video/audio con sinistra/destra e il ciak con su/giù. Trascina i file sul ciak per abbinarli.',
     'No assignments':'Nessun abbinamento',
     'Linked group':'Gruppo collegato',
     'Independent assignment':'Abbinamento indipendente',

@@ -335,11 +335,13 @@ class FileBrowser(ttk.Frame):
             assignments.add_command(label=self.app.tr('No assignments'),state='disabled')
         for i,group in enumerate(groups,1):
             linked=len(group['items'])>1
+            if i>1:assignments.add_separator()
+            assignments.add_command(label=(self.app.tr('Linked group')+f' {i}' if linked else self.app.tr('Independent assignment')),state='disabled')
             for item in group['items']:
                 prefix=(f'⇄ {i} · ' if linked else '○ · ')
                 title=prefix+item['label']+' / '+self.app.tr('Ciak')+' '+str(item['target'][3])
                 assignments.add_command(label=title,command=lambda target=item['target'],path=row:self.after_idle(lambda:self.app.go_to_assignment(target,path,self.kind)))
-        menu.add_cascade(label=self.app.tr('File assignments'),menu=assignments)
+        menu.add_cascade(label=self.app.tr('File assignments')+f' ({sum(len(g["items"]) for g in groups)})',menu=assignments)
         try:menu.tk_popup(event.x_root,event.y_root)
         finally:menu.grab_release()
 
@@ -544,7 +546,7 @@ class SceneSlateApp:
         ttk.Label(head,text='SCENE / SHOT / INQUADRATURE',style='Section.TLabel').pack(side='left')
         ttk.Button(head,text='Convenzione…',command=self.settings).pack(side='right')
         controls=ttk.Frame(left,style='Panel.TFrame');controls.pack(fill='x',pady=(10,8))
-        for text,action,sty in [('+ Scena',self.add_scene,'Primary.TButton'),('+ Shot',self.add_shot,'Primary.TButton'),('+ Sotto-shot',self.add_subshot,'Primary.TButton'),('⇄ Collegamenti…',self.manage_links,'TButton'),('− Elimina',self.delete_selected,'Danger.TButton'),('Rinumera…',self.renumber,'TButton')]:
+        for text,action,sty in [('+ Scena',self.add_scene,'Primary.TButton'),('+ Shot',self.add_shot,'Primary.TButton'),('+ Sotto-shot',self.add_subshot,'Primary.TButton'),('⇄ Collegamenti…',self.manage_links,'TButton')]:
             ttk.Button(controls,text=text,command=action,style=sty).pack(side='left',padx=(0,5))
         scene_wrap=ttk.Frame(left,style='Panel.TFrame');scene_wrap.pack(fill='both',expand=True)
         self.scene_tree=ttk.Treeview(scene_wrap,columns=('scene','shot','subshot','info','sync'),show='headings',selectmode='browse',height=5)
@@ -2151,10 +2153,13 @@ class SceneSlateApp:
             self.changed()
             self.refresh_scene_tree()
             self.notice('Manual synchronization saved. XML export will use the verified offset.')
+            self.root.after_idle(self.media_tree.focus_set)
 
         record=take.get('sync') or {}
         if quick and record.get('offset_seconds') is not None and record.get('signature')==signature:
-            QuickSyncReview(self.root,video,audio,record,approve,lambda:self.edit_sync(),language=self.language)
+            def full_editor():
+                SyncEditor(self.root,video,audio,record,approve,language=self.language)
+            QuickSyncReview(self.root,video,audio,record,approve,full_editor,language=self.language)
         else:
             if quick:self.notice('No suggested offset; open the sync editor.')
             SyncEditor(self.root,video,audio,record,approve,language=self.language)

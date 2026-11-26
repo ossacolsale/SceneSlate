@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.11.0 — Fast synchronization review
+
+- Immediate manual confirmation; quick autoplay review (P), with confirm, editor and close actions.
+- Reverse file-to-take navigation from both media browsers, including inherited link grouping.
+- Compact action bars, take actions menu and hover hints.
+- Adaptive shorter-window analysis, frequency-band GCC corroboration and more permissive evidence-based OK decisions.
+
 ## 3.10.1 — Playback, flat catalog and synchronization fixes
 
 - **Clear content…** in the scene/shot/sub-shot context menu removes takes from the selected subtree and linked equivalents after confirmation, preserving node descriptions, hierarchy, link groups and original media; Undo restores the catalog.
