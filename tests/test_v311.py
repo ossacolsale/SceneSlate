@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch, Mock
 import scene_core as core
 import scene_sync as sync
-from scene_sync_editor import SyncEditor, QuickSyncReview
+from scene_sync_editor import SyncEditor, QuickSyncReview, first_joint_activity, find_joint_activity
 
 class AssignmentTests(unittest.TestCase):
     def test_inherited_links_and_independent_reuse(self):
@@ -71,11 +71,54 @@ class GuiTests(unittest.TestCase):
                     quick.call_args.args[4](1.234567)
                 self.assertEqual(t['sync']['method'],'manual')
                 self.assertEqual(t['sync']['offset_seconds'],1.234567)
-                with patch.object(QuickSyncReview,'_load_waveforms',return_value=(array.array('f'),array.array('f'),0.,10.,15.,0.)),patch.object(QuickSyncReview,'play') as play:
+                with patch.object(QuickSyncReview,'_load_waveforms',return_value=(array.array('f'),array.array('f'),0.,10.,15.,0.,2.4)),patch.object(QuickSyncReview,'play') as play:
                     q=QuickSyncReview(root,str(v),str(a),t['sync'],lambda _:None,lambda:None)
-                    q.queue.put(('load',True,(array.array('f'),array.array('f'),0.,10.,15.,0.)))
+                    q.queue.put(('load',True,(array.array('f'),array.array('f'),0.,10.,15.,0.,2.4)))
                     q._poll()
                     play.assert_called_once()
+                    self.assertAlmostEqual(q.position,2.4)
                     q.close()
             finally:
                 app._sync_worker.close();root.destroy()
+
+
+class ActivityTests(unittest.TestCase):
+    def make_signal(self, seconds, active, gain=.1, rate=4000):
+        import math
+        return array.array('f',(
+            (gain if any(lo<=i/rate<hi for lo,hi in active) else .0001)
+            *math.sin(i*2*math.pi*310/rate) for i in range(round(seconds*rate))))
+
+    def test_skip_one_sided_sound_and_detect_first_shared_activity(self):
+        v=self.make_signal(7,[(.5,1.3),(3,4),(5,6)])
+        a=self.make_signal(7,[(1.5,2.3),(3,4),(5,6)],gain=.025)
+        self.assertAlmostEqual(first_joint_activity(v,a),3.,delta=.05)
+
+    def test_silence_and_steady_noise_not_accepted(self):
+        noise=self.make_signal(5,[(0,5)],gain=.002)
+        self.assertIsNone(first_joint_activity(noise,noise))
+        self.assertIsNone(first_joint_activity(noise,array.array('f',[0.]*len(noise))))
+
+    def test_scan_respects_signed_offset_and_crosses_chunk_boundary(self):
+        from scene_sync_editor import ACTIVITY_RATE
+        for offset in (-2.,2.):
+            shared=23.
+            def pcm(path,start,seconds,rate,fmt,ffmpeg):
+                # Shared activity at video t=23, external t=23+offset.
+                onset=shared+(offset if path=='audio' else 0)
+                return self.make_signal(seconds,[(onset-start,onset-start+1)],rate=rate)
+            with patch('scene_sync_editor._ffmpeg_pcm',side_effect=pcm) as decode:
+                start=find_joint_activity('video','audio',offset,30.,32.,'ffmpeg')
+            self.assertAlmostEqual(start,22.9,delta=.06)
+            calls=decode.call_args_list
+            self.assertGreaterEqual(len(calls),4)
+            self.assertAlmostEqual(calls[1].args[1]-calls[0].args[1],offset)
+            self.assertTrue(all(call.args[1]>=0 for call in calls))
+
+    def test_no_overlap_or_cancelled_does_not_decode(self):
+        from threading import Event
+        stop=Event();stop.set()
+        with patch('scene_sync_editor._ffmpeg_pcm') as decode:
+            self.assertIsNone(find_joint_activity('v','a',5.,4.,3.,'ffmpeg'))
+            self.assertIsNone(find_joint_activity('v','a',0.,4.,4.,'ffmpeg',stop))
+            decode.assert_not_called()

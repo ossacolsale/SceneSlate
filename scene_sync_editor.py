@@ -16,7 +16,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from threading import Thread
+from threading import Thread, Event
 import tkinter as tk
 from tkinter import ttk, messagebox
 import wave
@@ -60,6 +60,66 @@ def _extract_preview(path, source_start, duration, ffmpeg, rate=PREVIEW_RATE):
     n=min(len(data),count-pad)
     result[pad:pad+n]=data[:n]
     return result
+
+
+ACTIVITY_RATE = 4000
+ACTIVITY_FRAME = .05
+ACTIVITY_CHUNK = 20.
+ACTIVITY_PREROLL = .10
+
+
+def first_joint_activity(camera, recorder, rate=ACTIVITY_RATE):
+    """First shared energetic interval on an already aligned clock, or None.
+
+    Per-channel adaptive RMS thresholds reject quiet/steady background and
+    tolerate different recording gains. Require sustained joint activity or
+    a strong short transient; this is a listening cue, not a sync verdict.
+    """
+    frame=max(1,round(rate*ACTIVITY_FRAME))
+    count=min(len(camera),len(recorder))//frame
+    if count<2:return None
+    def levels(samples):
+        result=[]
+        for i in range(count):
+            values=samples[i*frame:(i+1)*frame]
+            mean=sum(values)/frame
+            result.append(math.sqrt(max(0.,sum((x-mean)**2 for x in values)/frame)))
+        return result
+    def threshold(values):
+        ordered=sorted(values)
+        floor=ordered[int((len(ordered)-1)*.20)]
+        upper=ordered[int((len(ordered)-1)*.90)]
+        return max(.00035, floor*2.5, upper*.08)
+    v,a=levels(camera),levels(recorder)
+    tv,ta=threshold(v),threshold(a)
+    joint=[x>=tv and y>=ta for x,y in zip(v,a)]
+    strong=[x>=tv*2 and y>=ta*2 for x,y in zip(v,a)]
+    for i,active in enumerate(joint):
+        if not active:continue
+        if sum(joint[i:i+5])>=3 or (i+1<count and strong[i] and strong[i+1]):
+            return i*frame/rate
+    return None
+
+
+def find_joint_activity(video, audio, offset, video_duration, audio_duration,
+                        ffmpeg, cancelled=None):
+    """Scan only the genuine common interval, in overlapping bounded chunks."""
+    begin=max(0.,-offset)
+    end=min(video_duration,audio_duration-offset)
+    cursor=begin
+    while cursor+2*ACTIVITY_FRAME<=end:
+        if cancelled is not None and cancelled.is_set():return None
+        seconds=min(ACTIVITY_CHUNK,end-cursor)
+        v=_ffmpeg_pcm(video,cursor,seconds,ACTIVITY_RATE,'f32le',ffmpeg)
+        if cancelled is not None and cancelled.is_set():return None
+        a=_ffmpeg_pcm(audio,max(0.,cursor+offset),seconds,ACTIVITY_RATE,'f32le',ffmpeg)
+        if cancelled is not None and cancelled.is_set():return None
+        found=first_joint_activity(v,a)
+        if found is not None:
+            return max(begin,cursor+found-ACTIVITY_PREROLL)
+        if cursor+seconds>=end-.001:break
+        cursor+=seconds-.5
+    return None
 
 
 def render_preview_wav(video, external, offset, video_start, output_path, ffmpeg, *,
@@ -338,8 +398,9 @@ class SyncEditor:
                 if kind=='load':
                     self.loading=False
                     if ok:
-                        if len(value)==6:
-                            self.wave_camera,self.wave_external,self.wave_duration,self.full_duration,self.external_duration,self.wave_external_start=value
+                        if len(value)>=6:
+                            self.wave_camera,self.wave_external,self.wave_duration,self.full_duration,self.external_duration,self.wave_external_start=value[:6]
+                            if len(value)>6:self.preview_start=value[6]
                         else:
                             self.wave_camera,self.wave_external,self.wave_duration=value[:3]
                             self.full_duration=value[3] if len(value)>3 else self.wave_duration
@@ -615,6 +676,8 @@ class QuickSyncReview(SyncEditor):
     def __init__(self,parent,video,audio,record,on_approve,on_edit,language='en'):
         self.on_edit=on_edit
         self.autoplay_started=False
+        self.preview_start=None
+        self.scan_cancel=Event()
         super().__init__(parent,video,audio,record,on_approve,language=language)
         self.win.title(self.tr('Quick sync review'))
         self.win.minsize(500,210)
@@ -628,7 +691,7 @@ class QuickSyncReview(SyncEditor):
         for title,path in [('Camera audio:',self.video),('External audio:',self.audio)]:
             ttk.Label(frame,text=self.tr(title)+' '+Path(path).name,wraplength=580).pack(anchor='w',pady=2)
         ttk.Label(frame,text=f"{self.tr('Suggested offset:')} {self.offset:+.6f} s").pack(anchor='w',pady=(4,0))
-        self.info=tk.StringVar(value=self.tr('Preparing listening preview…'))
+        self.info=tk.StringVar(value=self.tr('Finding shared audio activity…'))
         ttk.Label(frame,textvariable=self.info,wraplength=580).pack(anchor='w',pady=4)
         self.playhead_label=tk.StringVar(value='0.00 s')
         ttk.Label(frame,textvariable=self.playhead_label).pack(anchor='w')
@@ -646,16 +709,20 @@ class QuickSyncReview(SyncEditor):
         v=scene_sync.media_probe(self.video,ffprobe);a=scene_sync.media_probe(self.audio,ffprobe)
         if not v['audio'] or not a['audio'] or float(v['duration'])<=0:
             raise RuntimeError('Both files must contain an audio stream')
-        return (array.array('f'),array.array('f'),0.,float(v['duration']),float(a['duration']),0.)
+        vd,ad=float(v['duration']),float(a['duration'])
+        start=find_joint_activity(self.video,self.audio,self.offset,vd,ad,ffmpeg,self.scan_cancel)
+        return (array.array('f'),array.array('f'),0.,vd,ad,0.,start)
 
     def _poll(self):
         super()._poll()
         if self.closed:return
         if not self.loading and self.wave_camera is not None and not self.autoplay_started:
             self.autoplay_started=True
-            self.position=max(0.,-self.offset)
-            if self.position<min(self.full_duration,self.external_duration-self.offset):self.play()
-            else:self.info.set(self.tr('No overlapping audio to preview.'))
+            if self.preview_start is not None:
+                self.position=self.preview_start
+                self.play()
+            else:
+                self.info.set(self.tr('No significant shared audio found. Open the sync editor.'))
         if self.play_wall_started is not None:
             self.approve_button.configure(state='normal')
 
@@ -676,6 +743,15 @@ class QuickSyncReview(SyncEditor):
                 min(self.play_chunk_length,max(0.,time.monotonic()-self.play_wall_started)))
         self.playhead_label.set(f'{self.playhead_seconds:.2f} / {self.full_duration:.2f} s')
         self.cursor_timer=self.win.after(100,self._tick_playhead)
+
+    def play(self):
+        # Space cannot bypass the activity scan or start a silent preview.
+        if self.loading or self.preview_start is None:return
+        super().play()
+
+    def close(self):
+        self.scan_cancel.set()
+        super().close()
 
     def open_editor(self):
         self.close()

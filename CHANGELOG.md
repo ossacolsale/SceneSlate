@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.11.1 — Quick review shared audio onset
+
+- Start quick listening at the first significant jointly active audio interval, with 100 ms pre-roll, using signed offsets and independent adaptive energy thresholds.
+- Scan long takes in bounded chunks; stop scanning on modal close and keep approval disabled when no shared activity is detected.
+- Preserve the suggested synchronization offset and full editor behavior.
+
 ## 3.11.0 — Fast synchronization review
 
 - Immediate manual confirmation; quick autoplay review (P), with confirm, editor and close actions.

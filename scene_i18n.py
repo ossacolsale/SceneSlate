@@ -347,6 +347,8 @@ EN_TO_IT.update({
 
 EN_TO_IT.update({
     'Quick sync review':'Revisione rapida sync',
+    'Finding shared audio activity…':'Ricerca attività sonora comune…',
+    'No significant shared audio found. Open the sync editor.':'Nessuna attività sonora comune significativa. Apri l’editor di sincronizzazione.',
     'Quick review (P)':'Revisione rapida (P)',
     'Confirm synchronization':'Conferma sincronizzazione',
     'Open sync editor':'Apri editor sincronizzazione',
