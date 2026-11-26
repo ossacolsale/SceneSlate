@@ -42,7 +42,7 @@ import scene_session as session
 import scene_sync
 import scene_dependencies
 from scene_sync_worker import SyncWorker
-from scene_sync_editor import SyncEditor
+from scene_sync_editor import SyncEditor, QuickSyncReview
 
 APP_NAME = 'SceneSlate'
 VIDEO = 'video'
@@ -134,8 +134,9 @@ class FileBrowser(ttk.Frame):
         if self.kind==VIDEO:
             self.tree.bind('<F4>',self.preview_video)
             self.tree.bind('<Control-Return>',self.preview_video)
-            self.tree.bind('<Button-3>',self.preview_menu)
-            self.preview_context=tk.Menu(self.tree,tearoff=False)
+        self.tree.bind('<Button-3>',self.preview_menu)
+        self.preview_context=tk.Menu(self.tree,tearoff=False)
+        self.assignment_menu=tk.Menu(self.preview_context,tearoff=False)
         self.tree.bind('<Return>', self.on_enter)
         self.tree.bind('<ButtonPress-1>', self.drag_press, add='+')
         self.tree.bind('<B1-Motion>', self.drag_motion, add='+')
@@ -322,9 +323,23 @@ class FileBrowser(ttk.Frame):
         self.tree.selection_set(row);self.tree.focus(row)
         menu=self.preview_context
         menu.delete(0,'end')
-        menu.add_command(label=self.app.tr('Play selected video (F4)'),command=lambda:self.after_idle(self.preview_video))
-        menu.add_command(label=self.app.tr('Video player…'),command=lambda:self.after_idle(self.app.choose_video_player))
-        menu.add_command(label=self.app.tr('Use system video player'),command=self.app.reset_video_player)
+        if self.kind==VIDEO:
+            menu.add_command(label=self.app.tr('Play selected video (F4)'),command=lambda:self.after_idle(self.preview_video))
+            menu.add_command(label=self.app.tr('Video player…'),command=lambda:self.after_idle(self.app.choose_video_player))
+            menu.add_command(label=self.app.tr('Use system video player'),command=self.app.reset_video_player)
+            menu.add_separator()
+        assignments=self.assignment_menu
+        assignments.delete(0,'end')
+        groups=core.media_assignments(self.app.catalog,row,self.kind)
+        if not groups:
+            assignments.add_command(label=self.app.tr('No assignments'),state='disabled')
+        for i,group in enumerate(groups,1):
+            linked=len(group['items'])>1
+            for item in group['items']:
+                prefix=(f'⇄ {i} · ' if linked else '○ · ')
+                title=prefix+item['label']+' / '+self.app.tr('Ciak')+' '+str(item['target'][3])
+                assignments.add_command(label=title,command=lambda target=item['target'],path=row:self.after_idle(lambda:self.app.go_to_assignment(target,path,self.kind)))
+        menu.add_cascade(label=self.app.tr('File assignments'),menu=assignments)
         try:menu.tk_popup(event.x_root,event.y_root)
         finally:menu.grab_release()
 
@@ -565,10 +580,12 @@ class SceneSlateApp:
         self.scene_context.add_command(label='Rinomina / Rinumera…',command=self.renumber)
         self.scene_context.add_command(label='Svuota contenuto…',command=lambda:self.root.after_idle(self.clear_selected_content))
         self.scene_context.add_command(label='Elimina…',command=self.delete_selected)
-        copy_row=ttk.Frame(left,style='Panel.TFrame');copy_row.pack(fill='x',pady=(6,0))
-        ttk.Button(copy_row,text='⧉ Copia contenuto',command=self.copy_selected).pack(side='left',padx=(0,5))
-        ttk.Button(copy_row,text='↳ Incolla nella selezione',command=self.paste_selected).pack(side='left',padx=(0,5))
-        ttk.Label(copy_row,text='Ctrl+C / Ctrl+V nella struttura',style='Muted.TLabel').pack(side='left')
+        copy_row=controls
+        b=ttk.Button(copy_row,text='⧉',width=3,command=self.copy_selected);b.pack(side='left',padx=(0,3))
+        self.tip(b,'Copy the selected node content (Ctrl+C).')
+        b=ttk.Button(copy_row,text='↳',width=3,command=self.paste_selected);b.pack(side='left',padx=(0,3))
+        self.tip(b,'Paste into the selected node (Ctrl+V).')
+
         filter_row=ttk.Frame(left,style='Panel.TFrame');filter_row.pack(fill='x',pady=(6,0))
         ttk.Label(filter_row,text='SYNC:',style='Panel.TLabel').pack(side='left',padx=(0,4))
         self.sync_filter_combo=ttk.Combobox(filter_row,textvariable=self.sync_filter_choice,
@@ -587,14 +604,16 @@ class SceneSlateApp:
         ttk.Label(left,textvariable=self.scene_count_var,style='Muted.TLabel').pack(anchor='w',pady=(3,0))
 
         detail_head=ttk.Frame(left,style='Panel.TFrame');detail_head.pack(fill='x',pady=(12,4))
-        self.detail_label=ttk.Label(detail_head,text='CIAK E ABBINAMENTI',style='Section.TLabel');self.detail_label.pack(side='left')
-        ttk.Button(detail_head,text='+ Ciak',command=self.new_take).pack(side='right',padx=(4,0))
-        ttk.Button(detail_head,text='↻ Sync',command=self.retry_sync).pack(side='right',padx=(4,0))
-        ttk.Button(detail_head,text='Sync details',command=self.sync_details).pack(side='right',padx=(4,0))
-        ttk.Button(detail_head,text='✎ Sync editor',command=self.edit_sync).pack(side='right',padx=(4,0))
-        ttk.Button(detail_head,text='N° ciak…',command=self.edit_take_number).pack(side='right',padx=(4,0))
-        ttk.Button(detail_head,text='↻ Auto',command=self.reset_take_number).pack(side='right',padx=(4,0))
-        ttk.Button(detail_head,text='− Ciak',command=self.delete_take).pack(side='right',padx=(4,0))
+        self.detail_label=ttk.Label(detail_head,text='CIAK E ABBINAMENTI',style='Section.TLabel');self.detail_label.pack(anchor='w')
+        take_tools=ttk.Frame(detail_head,style='Panel.TFrame');take_tools.pack(fill='x',pady=(4,0))
+        for title,action in [('+ Ciak',self.new_take),('Quick review (P)',self.quick_review),('✎ Sync editor',self.edit_sync),('↻ Sync',self.retry_sync)]:
+            b=ttk.Button(take_tools,text=title,command=action);b.pack(side='left',padx=(0,4))
+            if title=='Quick review (P)':self.tip(b,'Play proposed alignment immediately; confirm or open the editor (P).')
+        self.take_tools_button=ttk.Menubutton(take_tools,text='Take actions…')
+        self.take_tools_menu=tk.Menu(self.take_tools_button,tearoff=False)
+        for title,action in [('Sync details',self.sync_details),('N° ciak…',self.edit_take_number),('↻ Auto',self.reset_take_number),('− Ciak',self.delete_take)]:
+            self.take_tools_menu.add_command(label=title,command=lambda fn=action:self.root.after_idle(fn))
+        self.take_tools_button.configure(menu=self.take_tools_menu);self.take_tools_button.pack(side='left')
         media_wrap=ttk.Frame(left,style='Panel.TFrame');media_wrap.pack(fill='both',expand=True)
         self.media_tree=ttk.Treeview(media_wrap,columns=('take','video','vq','audio','aq','sync'),
                                      show='headings',selectmode='browse',height=6)
@@ -634,8 +653,7 @@ class SceneSlateApp:
         for q,name in core.QUALITIES.items():
             btn=ttk.Button(r,text=f'{q} · {name}',command=lambda q=q:self.set_quality(q))
             btn.pack(side='left',padx=2);self.rating_buttons[q]=btn
-        ttk.Label(left,text='←/→ sceglie VIDEO o AUDIO; ↑/↓ sceglie il ciak; B/R/S cambia la qualifica. F4: riproduci video. Trascina un file sulla riga per abbinarlo.',
-                  style='Muted.TLabel',wraplength=550).pack(anchor='w')
+        self.tip(self.media_tree,'Select video/audio with Left/Right. Select take with Up/Down. Drag files onto a take to pair them.')
         self.details_toggle=ttk.Button(left,text='▸ Descriptions / Notes',command=self.toggle_details)
         self.details_toggle.pack(fill='x',pady=(7,1))
         self.details_content=ttk.Frame(left,style='Panel.TFrame')
@@ -670,6 +688,28 @@ class SceneSlateApp:
         right.add(self.video_browser,weight=1);right.add(self.audio_browser,weight=1)
         status=tk.Label(self.root,textvariable=self.status_var,anchor='w',bg='#0c1421',fg='#c8d7e9',font=('Segoe UI',9),padx=14,pady=8)
         status.pack(fill='x')
+
+    def tip(self,widget,message):
+        state={'after':None,'window':None}
+        def hide(event=None):
+            if state['after'] is not None:
+                try:widget.after_cancel(state['after'])
+                except tk.TclError:pass
+                state['after']=None
+            if state['window'] is not None:
+                try:state['window'].destroy()
+                except tk.TclError:pass
+                state['window']=None
+        def show():
+            state['after']=None
+            if not widget.winfo_exists():return
+            win=tk.Toplevel(widget);state['window']=win;win.overrideredirect(True)
+            win.geometry(f'+{widget.winfo_pointerx()+12}+{widget.winfo_pointery()+18}')
+            tk.Label(win,text=self.tr(message),bg='#263b50',fg='white',padx=8,pady=5,wraplength=440).pack()
+        def enter(event):
+            hide();state['after']=widget.after(700,show)
+        widget.bind('<Enter>',enter,add='+');widget.bind('<Leave>',hide,add='+')
+        widget.bind('<ButtonPress>',hide,add='+');widget.bind('<Destroy>',hide,add='+')
 
     def tr(self,message):
         return translate(message,self.language)
@@ -1261,6 +1301,25 @@ class SceneSlateApp:
         ttk.Button(footer, text=self.tr('Apply'), command=apply_links, style='Primary.TButton').pack(side='right')
         center_window(win, self.root, 620, 470)
 
+    def go_to_assignment(self,target,path,kind):
+        n,h,u,num=target
+        self.commit_notes()
+        take=core.take_for(self.catalog,n,h,num,u)
+        if not take or not take.get(kind) or core.identity(take[kind]['path'])!=core.identity(path):
+            self.notice('No assignments');return
+        iid=f'u:{n}:{h}:{u}' if u else f't:{n}:{h}'
+        if not self.scene_tree.exists(iid):
+            self.sync_filter=self.take_filter='any'
+            self.only_unsynced_var.set(False);self.only_empty_var.set(False)
+            self._configure_filter_choices()
+        self.active_side=kind
+        self.refresh_scene_tree(iid)
+        self.last_take_number=num
+        self.render_takes(select_take=num)
+        self.scene_tree.focus(iid)
+        self.media_tree.focus_set()
+        self.queue_save_session()
+
     def copy_selected(self):
         target=self.tree_target()
         if target is None:self.notice('Seleziona scena, shot o sotto-shot da copiare.');return
@@ -1763,6 +1822,8 @@ class SceneSlateApp:
     def rating_shortcut(self,event):
         mapping={self.rating_code(q).lower():q for q in ('B','R','S')}
         key=event.keysym.lower()
+        if key=='p' and not (event.state & 0xC):
+            self.quick_review();return 'break'
         if key in mapping:return self.set_quality(mapping[key])
 
     def show_take_video_menu(self,event):
@@ -2055,8 +2116,12 @@ class SceneSlateApp:
         self.changed()
         self.notice('Waveform synchronization queued.')
 
-    def edit_sync(self):
-        """Open the precision sync editor; no media data changes until approved."""
+    def quick_review(self):
+        self.edit_sync(quick=True)
+
+    def edit_sync(self,quick=False):
+        """Open a quick listening modal or precision editor."""
+        self.commit_notes()
         target=self.active_shot(quiet=True)
         number=self.selected_take()
         if target is None or number is None:
@@ -2072,21 +2137,27 @@ class SceneSlateApp:
             return
 
         def approve(offset):
-            if not (take.get('video') and take.get('audio')) or \
-                scene_sync.fingerprint(take['video']['path'],take['audio']['path'])!=signature:
+            current=core.take_for(self.catalog,*target,number,sub_id)
+            if not current or not (current.get('video') and current.get('audio')) or \
+                scene_sync.fingerprint(current['video']['path'],current['audio']['path'])!=signature:
                 raise RuntimeError('Paired media changed while editing; reopen the sync editor.')
             self.snapshot()
             record=scene_sync.sync_record('OK',offset_seconds=offset,score=None,
                     method='manual',signature=signature,
                     error='Manually approved after listening; check long-take drift.')
             record['manual_verified']=True
-            take['sync']=record
+            current['sync']=record
             self._propagate_related_links(target[0], target[1], sub_id)
             self.changed()
             self.refresh_scene_tree()
             self.notice('Manual synchronization saved. XML export will use the verified offset.')
 
-        SyncEditor(self.root,video,audio,take.get('sync'),approve,language=self.language)
+        record=take.get('sync') or {}
+        if quick and record.get('offset_seconds') is not None and record.get('signature')==signature:
+            QuickSyncReview(self.root,video,audio,record,approve,lambda:self.edit_sync(),language=self.language)
+        else:
+            if quick:self.notice('No suggested offset; open the sync editor.')
+            SyncEditor(self.root,video,audio,record,approve,language=self.language)
 
     def sync_details(self):
         target=self.active_shot(quiet=True);num=self.selected_take()
