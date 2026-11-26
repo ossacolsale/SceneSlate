@@ -1,10 +1,14 @@
-# SceneSlate 3.11.1
+# SceneSlate 3.11.2
 
 <img src="sceneslate_logo.png" alt="SceneSlate logo" width="180">
 
 SceneSlate is a **cross-platform footage catalog** written in Python 3 and Tkinter. Its interface is available in **English and Italian**. A new installation starts in **English**; change the language using the **Language / Lingua** selector in the top toolbar. The preference survives restarts and upgrades, and switching languages does **not** rename files, modify a catalog or reset the scene selection.
 
 Footage is organized as **scene → shot → optional sub-shot → take**. Every take has an optional video reference and an optional audio reference, each with independent ratings (`B` good, `R` reserve, `S` reject). Takes can have descriptions and annotations; scenes, shots and sub-shots have optional descriptions. **Original media files are never renamed, moved, deleted or duplicated.** When a video/audio pair is complete, SceneSlate attempts **background waveform synchronization** if FFmpeg is installed; the alignment metadata is stored per take, never written into the media.
+
+## 3.11.2 — Local sub-shot structure and repair
+
+Linked shots mirror their direct takes, not their sub-shot structure. Linked scenes share content of matching existing direct shots, without creating or removing structure. Sub-shots share takes only when explicitly linked. Existing catalogs are not automatically altered. To remove an unintended sub-shot, double-click its row and save an empty name; only the selected sub-shot and its local associations are removed (confirmation for nonempty content, Undo available). Original files are never deleted.
 
 ## 3.11.1 — Quick review starts at shared sound
 

@@ -10,20 +10,21 @@ import scene_sync as sync
 from scene_sync_editor import SyncEditor, QuickSyncReview, first_joint_activity, find_joint_activity
 
 class AssignmentTests(unittest.TestCase):
-    def test_inherited_links_and_independent_reuse(self):
+    def test_inherited_direct_shot_links_and_independent_subshots(self):
         with tempfile.TemporaryDirectory() as d:
             media=Path(d)/'audio.wav';media.touch()
             other=Path(d)/'other.wav';other.touch()
             c=core.new_catalog()
             for n in (1,2,3):
                 core.add_scene(c,n);core.add_shot(c,n,1)
+                core.add_media(c,n,1,media,'audio')
                 u=core.add_subshot(c,n,1,'A')
-                core.add_media(c,n,1,media,'audio',subshot_id=u)
+                core.add_media(c,n,1,other,'audio',subshot_id=u)
             core.configure_links(c,1,member_refs=[core.node_ref(2)])
             groups=core.media_assignments(c,media,'audio')
             self.assertEqual(sorted(len(g['items']) for g in groups),[1,2])
             self.assertEqual([x['target'][0] for x in groups[0]['items']],[1,2])
-            self.assertFalse(core.media_assignments(c,other,'audio'))
+            self.assertEqual([len(g['items']) for g in core.media_assignments(c,other,'audio')],[1,1,1])
             self.assertFalse(core.media_assignments(c,media,'video'))
 
     def test_multiband_promotes_only_distinct_consensus(self):

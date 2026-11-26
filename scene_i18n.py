@@ -347,6 +347,12 @@ EN_TO_IT.update({
 
 EN_TO_IT.update({
     'Quick sync review':'Revisione rapida sync',
+    'Rename sub-shot':'Rinomina sotto-shot',
+    'New name (leave empty to remove this sub-shot locally):':'Nuovo nome (lascia vuoto per rimuovere questo sotto-shot localmente):',
+    'Remove sub-shot':'Rimuovi sotto-shot',
+    'Remove only this sub-shot and its local take assignments? Other linked items and original files are unchanged. Undo is available.':'Rimuovere solo questo sotto-shot e le sue associazioni locali? Gli altri elementi collegati e i file originali restano invariati. È possibile annullare.',
+    'Sub-shot removed locally.':'Sotto-shot rimosso localmente.',
+    'Linked takes and descriptions are mirrored; structure and unlinked sub-shots stay local.':'I ciak e le descrizioni collegati vengono replicati; la struttura e i sotto-shot non collegati restano locali.',
     'Finding shared audio activity…':'Ricerca attività sonora comune…',
     'No significant shared audio found. Open the sync editor.':'Nessuna attività sonora comune significativa. Apri l’editor di sincronizzazione.',
     'Quick review (P)':'Revisione rapida (P)',

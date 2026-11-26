@@ -666,44 +666,60 @@ def _strip_links(obj):
     return copy.deepcopy(obj)
 
 
-def _node_payload(node, kind):
-    if kind == 'scene':
-        keys = ['description', 'notes', 'shots']
-    elif kind == 'shot':
-        keys = ['description', 'notes', 'takes', 'subshots']
-    else:
-        keys = ['description', 'notes', 'takes']
-    return _strip_links({key: node.get(key) for key in keys})
+def linked_take_targets(c, scene_number, shot_number, subshot_id=None):
+    """Explicit sub-shot links only; direct shots also inherit matching scene links.
+
+    No relationship here ever creates, removes or renames a structural node.
+    Resolve transitively so overlapping scene and shot groups stay consistent.
+    """
+    nodes={}
+    memberships=defaultdict(list)
+    for scene,shot,sub,node in iter_containers(c):
+        n,h=scene['number'],shot['number']
+        key=(n,h,sub['id'] if sub else None)
+        groups=[]
+        if sub:
+            if sub.get('link_group'):groups.append(('subshot',sub['link_group']))
+        else:
+            if scene.get('link_group'):groups.append(('scene-shot',scene['link_group'],h))
+            if shot.get('link_group'):groups.append(('shot',shot['link_group']))
+        nodes[key]=(node,groups)
+        for group in groups:memberships[group].append(key)
+    queue=[(scene_number,shot_number,subshot_id)]
+    seen=set()
+    result=[]
+    while queue:
+        key=queue.pop()
+        if key in seen or key not in nodes:continue
+        seen.add(key)
+        node,groups=nodes[key]
+        result.append((key,node))
+        for group in groups:queue.extend(memberships[group])
+    return result
 
 
-def _apply_payload(node, kind, payload):
-    for key, value in payload.items():
-        node[key] = copy.deepcopy(value)
-    if kind == 'scene':
-        for sh in node.get('shots', []):
-            sh.setdefault('link_group', None)
-            for sub in sh.get('subshots', []):
-                sub.setdefault('link_group', None)
-    elif kind == 'shot':
-        for sub in node.get('subshots', []):
-            sub.setdefault('link_group', None)
-
-
-def propagate_links(c, scene_number, shot_number=None, subshot_id=None):
-    kind, source = _kind_and_node(c, scene_number, shot_number, subshot_id)
-    if source is None:
-        raise CatalogError('Elemento collegabile non trovato.')
-    gid = source.get('link_group')
-    if not gid:
-        return 0
-    payload = _node_payload(source, kind)
-    source_ref = node_ref(scene_number, shot_number, subshot_id)
-    changed = 0
-    for ref, node_kind, other in iter_nodes(c, kind):
-        if ref == source_ref or other.get('link_group') != gid:
-            continue
-        _apply_payload(other, kind, payload)
-        changed += 1
+def propagate_links(c, scene_number, shot_number=None, subshot_id=None, *, metadata_only=False):
+    """Mirror content without replacing any scene/shot/sub-shot structure."""
+    kind,source=_kind_and_node(c,scene_number,shot_number,subshot_id)
+    if source is None:raise CatalogError('Elemento collegabile non trovato.')
+    changed=0
+    if kind=='scene':
+        gid=source.get('link_group')
+        if not gid:return 0
+        for other in c['scenes']:
+            if other is source or other.get('link_group')!=gid:continue
+            for key in ('description','notes'):other[key]=copy.deepcopy(source.get(key,''))
+            changed+=1
+        if not metadata_only:
+            for sh in source['shots']:
+                changed+=propagate_links(c,scene_number,sh['number'])
+        return changed
+    for _,other in linked_take_targets(c,scene_number,shot_number,subshot_id):
+        if other is source:continue
+        for key in ('description','notes'):
+            other[key]=copy.deepcopy(source.get(key,''))
+        if not metadata_only:other['takes']=copy.deepcopy(source['takes'])
+        changed+=1
     return changed
 
 
@@ -736,56 +752,20 @@ def configure_links(c, scene_number, shot_number=None, subshot_id=None, member_r
 
 
 def clear_take_targets(c, scene_number, shot_number=None, subshot_id=None):
-    """Resolve the subtree plus linked equivalents, without altering structure.
+    """Clear the selected local subtree plus actual linked take containers.
 
-    Descendant links and links inherited from a scene/shot are transitive.
-    Match equivalent sub-shots by name (their IDs may differ in older catalogs).
+    A linked parent never implicitly owns another parent's sub-shots.
     """
-    kind, source = _kind_and_node(c, scene_number, shot_number, subshot_id)
-    if source is None:
-        raise CatalogError('Elemento collegabile non trovato.')
-    nodes = {}
-    for ref, level, node in iter_nodes(c):
-        parts = ref.split(':', 3)
-        key = (int(parts[1]), int(parts[2]) if len(parts)>2 else None,
-               parts[3] if len(parts)>3 else None)
-        nodes[key] = (level, node)
-    groups = defaultdict(list)
-    for key, (level, node) in nodes.items():
-        if node.get('link_group'):
-            groups[level, node['link_group']].append(key)
-    queue = [(scene_number, shot_number, subshot_id)]
-    seen = set()
-    targets = []
-    while queue:
-        key = queue.pop()
-        if key in seen or key not in nodes:
-            continue
-        seen.add(key)
-        n,h,u = key
-        level,node = nodes[key]
-        queue.extend(groups.get((level,node.get('link_group')), []))
-        if level == 'scene':
-            queue.extend(k for k in nodes if k[0]==n and k[1] is not None)
-        elif level == 'shot':
-            queue.extend(k for k in nodes if k[:2]==(n,h) and k[2] is not None)
-        if level != 'scene':
-            targets.append(node)
-            # Project only this node, not its whole ancestor, onto linked parents.
-            for parent_key in ((n,None,None), (n,h,None)):
-                if parent_key == key or parent_key not in nodes:
-                    continue
-                parent_level,parent = nodes[parent_key]
-                for other in groups.get((parent_level,parent.get('link_group')), []):
-                    on,oh,_ = other
-                    oh = h if parent_level=='scene' else oh
-                    if u is None:
-                        queue.append((on,oh,None))
-                    else:
-                        queue.extend(k for k,(lv,d) in nodes.items()
-                                     if k[:2]==(on,oh) and lv=='subshot'
-                                     and d['name'].casefold()==node['name'].casefold())
-    return targets
+    kind,source=_kind_and_node(c,scene_number,shot_number,subshot_id)
+    if source is None:raise CatalogError('Elemento collegabile non trovato.')
+    result={}
+    for scene,shot,sub,node in iter_containers(c):
+        n,h=scene['number'],shot['number']
+        u=sub['id'] if sub else None
+        if n!=scene_number or (shot_number is not None and h!=shot_number):continue
+        if subshot_id is not None and u!=subshot_id:continue
+        for key,other in linked_take_targets(c,n,h,u):result[key]=other
+    return list(result.values())
 
 
 def clear_take_content(c, scene_number, shot_number=None, subshot_id=None):
@@ -1004,10 +984,10 @@ def media_assignments(c, path, kind):
         name=sub['name'].casefold() if sub else None
         num=take['number']
         keys=set()
-        if scene.get('link_group'):
-            keys.add(('scene',scene['link_group'],h,name,num))
-        if shot.get('link_group'):
-            keys.add(('shot',shot['link_group'],name,num))
+        if not sub and scene.get('link_group'):
+            keys.add(('scene',scene['link_group'],h,num))
+        if not sub and shot.get('link_group'):
+            keys.add(('shot',shot['link_group'],num))
         if sub and sub.get('link_group'):
             keys.add(('subshot',sub['link_group'],num))
         items=[{'target':(n,h,u,num),'label':label(c,n,h,sub['name'] if sub else None)}]

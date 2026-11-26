@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.11.2 — Local sub-shot structure
+
+- Separate structural edits from linked take propagation, including inherited scene links and reverse assignment grouping.
+- Double-click a sub-shot and submit a blank name to remove it locally, with confirmation for nonempty content and Undo.
+- Background synchronization no longer copies entire unrelated containers.
+
 ## 3.11.1 — Quick review shared audio onset
 
 - Start quick listening at the first significant jointly active audio interval, with 100 ms pre-roll, using signed offsets and independent adaptive energy thresholds.

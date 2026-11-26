@@ -19,10 +19,10 @@ class PatchTests(unittest.TestCase):
             v=core.shot_for(c,3,1)['subshots'][0]['id']
             core.configure_links(c,1,1,u,[core.node_ref(3,1,v)])
             # Configuration of a descendant must not cause deletion of siblings.
-            self.assertEqual(core.clear_take_content(c,1,1,u),3)
+            self.assertEqual(core.clear_take_content(c,1,1,u),2)
             for n in (1,2,3):
                 self.assertEqual(len(core.shot_for(c,n,1)['subshots']),1)
-                self.assertFalse(core.shot_for(c,n,1)['subshots'][0]['takes'])
+                self.assertEqual(len(core.shot_for(c,n,1)['subshots'][0]['takes']),1 if n==2 else 0)
                 self.assertEqual(len(core.shot_for(c,n,2)['takes']),1)
             self.assertTrue(media.exists());core.validate(c)
     def test_two_tight_inliers_rescued_only_with_corroboration(self):

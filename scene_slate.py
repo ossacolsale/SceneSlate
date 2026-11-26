@@ -566,7 +566,7 @@ class SceneSlateApp:
         self.scene_tree.tag_configure('empty_shot',foreground='#ffce78')
         self.scene_tree.tag_configure('sync_bad',foreground='#ffaf78')
         self.scene_tree.bind('<<TreeviewSelect>>',self.on_scene_select)
-        self.scene_tree.bind('<Double-1>',lambda e:self.renumber())
+        self.scene_tree.bind('<Double-1>',self.rename_tree_row)
         self.scene_tree.bind('<Delete>',lambda e:self.delete_selected())
         self.scene_tree.bind('<ButtonRelease-1>',self.drop_scene_release,add='+')
         self.scene_tree.bind('<Button-3>',self.show_scene_context)
@@ -1198,18 +1198,12 @@ class SceneSlateApp:
         return core.label(self.catalog, n, h)
 
     def _propagate_related_links(self, n=None, h=None, u=None):
-        if n is None:
-            return 0
-        count = 0
-        scene = core.scene_for(self.catalog, n)
-        shot = core.shot_for(self.catalog, n, h) if h is not None else None
-        sub = core.subshot_for(self.catalog, n, h, u) if u else None
-        if scene and scene.get('link_group'):
-            count += core.propagate_links(self.catalog, n)
-        if shot and shot.get('link_group'):
-            count += core.propagate_links(self.catalog, n, h)
-        if sub and sub.get('link_group'):
-            count += core.propagate_links(self.catalog, n, h, u)
+        if n is None:return 0
+        count=core.propagate_links(self.catalog,n,metadata_only=h is not None)
+        if h is not None:
+            count+=core.propagate_links(self.catalog,n,h,metadata_only=u is not None)
+        if u is not None:
+            count+=core.propagate_links(self.catalog,n,h,u)
         return count
 
     def manage_links(self):
@@ -1228,7 +1222,7 @@ class SceneSlateApp:
         outer = ttk.Frame(win, style='Panel.TFrame', padding=18)
         outer.pack(fill='both', expand=True)
         ttk.Label(outer, text=self.tr('Select linked items'), style='Section.TLabel').pack(anchor='w')
-        ttk.Label(outer, text=self.tr('Changes to takes and descriptions will be mirrored across all linked items of the same kind.'), style='Muted.TLabel', wraplength=520, justify='left').pack(anchor='w', fill='x', pady=(4, 10))
+        ttk.Label(outer, text=self.tr('Linked takes and descriptions are mirrored; structure and unlinked sub-shots stay local.'), style='Muted.TLabel', wraplength=520, justify='left').pack(anchor='w', fill='x', pady=(4, 10))
         ttk.Label(outer, text=self.tr('Current item:') + ' ' + current_label, style='Panel.TLabel').pack(anchor='w', pady=(0, 8))
         listbox = ttk.Frame(outer, style='Panel.TFrame')
         listbox.pack(fill='both', expand=True)
@@ -1612,7 +1606,6 @@ class SceneSlateApp:
         if n is None:messagebox.showinfo('Scena richiesta','Seleziona prima una scena o un suo shot.',parent=self.root);return
         self.snapshot()
         h=core.add_shot(self.catalog,n)
-        self._propagate_related_links(n)
         self.refresh_scene_tree(f't:{n}:{h}');self.changed()
 
     def add_subshot(self):
@@ -1629,7 +1622,6 @@ class SceneSlateApp:
             self.commit_notes()
             name=core.clean_subshot_name(name)
             self.snapshot(); uid=core.add_subshot(self.catalog,*target,name)
-            self._propagate_related_links(target[0], target[1], None)
             self.refresh_scene_tree(f'u:{target[0]}:{target[1]}:{uid}')
             self.changed()
         except core.CatalogError as exc:
@@ -1667,19 +1659,41 @@ class SceneSlateApp:
         self.snapshot()
         if h is None:core.remove_scene(self.catalog,n);sel=None
         elif u:
-            core.remove_subshot(self.catalog,n,h,u); self._propagate_related_links(n,h,None); sel=f't:{n}:{h}'
+            core.remove_subshot(self.catalog,n,h,u); sel=f't:{n}:{h}'
         else:
-            core.remove_shot(self.catalog,n,h); self._propagate_related_links(n); sel=f's:{n}'
+            core.remove_shot(self.catalog,n,h); sel=f's:{n}'
         self.refresh_scene_tree(sel);self.changed()
+
+    def rename_tree_row(self,event):
+        row=self.scene_tree.identify_row(event.y)
+        if not row:return 'break'
+        self.scene_tree.selection_set(row);self.scene_tree.focus(row)
+        self.on_scene_select()
+        self.renumber()
+        return 'break'
 
     def renumber(self):
         n,h=self.selected_ids()
         if n is None:return
         u=self.selected_subshot_id()
         if u:
-            old=core.subshot_for(self.catalog,n,h,u)['name']
-            new=simpledialog.askstring('Rinomina sotto-shot',f'Nuovo nome per {old}:',initialvalue=old,parent=self.root)
+            sub=core.subshot_for(self.catalog,n,h,u)
+            old=sub['name']
+            new=simpledialog.askstring(self.tr('Rename sub-shot'),self.tr('New name (leave empty to remove this sub-shot locally):'),initialvalue=old,parent=self.root)
             if new is None or new==old:return
+            self.commit_notes()
+            if not new.strip():
+                count=len(sub['takes'])
+                if count or sub.get('description') or sub.get('notes') or sub.get('link_group'):
+                    msg=self.tr('Remove only this sub-shot and its local take assignments? Other linked items and original files are unchanged. Undo is available.')+f'\n\n{self.tr("Take entries to remove:")} {count}'
+                    if not messagebox.askyesno(self.tr('Remove sub-shot'),msg,parent=self.root):return
+                self.snapshot()
+                core.remove_subshot(self.catalog,n,h,u)
+                self._editing_node_target=None;self._editing_take_target=None
+                self.last_take_number=None
+                self.refresh_scene_tree(f't:{n}:{h}');self.changed()
+                self.notice('Sub-shot removed locally.')
+                return
             try:
                 self.snapshot();core.rename_subshot(self.catalog,n,h,u,new)
                 self.refresh_scene_tree(f'u:{n}:{h}:{u}');self.changed()
@@ -2093,9 +2107,8 @@ class SceneSlateApp:
                     take['sync']=copy.deepcopy(result)
                     changed=True
         if changed:
-            for scene,shot,sub,container in core.iter_containers(self.catalog):
-                if any(t.get('sync') for t in container['takes']):
-                    self._propagate_related_links(scene['number'], shot['number'], sub['id'] if sub else None)
+            # The worker result is already applied to every exact paired source.
+            # Never propagate a whole container from an unrelated background result.
             self.changed()
             self.refresh_scene_tree()
         if not self._sync_worker.closed:
