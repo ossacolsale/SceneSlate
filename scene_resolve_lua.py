@@ -45,7 +45,7 @@ local function fps_of(item)
     if n==23.976 or n==23.98 then return 24000/1001 end
     if n==29.97 then return 30000/1001 end
     if n==59.94 then return 60000/1001 end
-    return n
+    return n and n>0 and n or nil
 end
 local function nearest(n)
     if n>=0 then return math.floor(n+.5) end
@@ -131,7 +131,7 @@ if #candidates~=1 then
     report:close();return
 end
 local package_root=candidates[1]
-project_id=project_id or call(package_root,"GetUniqueId")
+project_id=project_id or call(package_root,"GetUniqueId") or (tostring(call(project,"GetName") or "unknown").."|"..manifest.root)
 local function find_folder(names,create)
     local folder=package_root
     for i=2,#names do
