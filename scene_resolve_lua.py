@@ -36,7 +36,7 @@ local function number(s)
     if type(s)=="number" then return s end
     local a,b=tostring(s):match("^%s*(%d+)%s*/%s*(%d+)%s*$")
     if a and tonumber(b)>0 then return tonumber(a)/tonumber(b) end
-    local v=tonumber(s)
+    local v=tonumber((tostring(s):gsub(',', '.')))
     if v and v==v and math.abs(v)<math.huge then return v end
     return nil
 end
@@ -217,6 +217,8 @@ local function locate(row,kind,folder,allow_import)
     end
     if #fresh~=1 then return nil,"ImportMedia did not yield one distinct ID in target bin" end
     all_ids[id(fresh[1])]=true;id_count[id(fresh[1])]=1
+    local bn=norm(basename(med.path));basename_paths[bn]=basename_paths[bn] or {}
+    basename_paths[bn][norm(med.path)]=true
     return fresh[1]
 end
 local function synced_matches(item,audio)
@@ -232,7 +234,7 @@ end
 local function offset_error(row,v)
     local vf=fps_of(v)
     local raw=number(prop(v,"Audio Offset"))
-    if not vf or vf<=0 or raw==nil or not OFFSET_SIGN then return nil end
+    if not vf or vf<=0 or raw==nil or not OFFSET_SIGN or row.offset==nil then return nil end
     return (raw*OFFSET_SIGN/vf-row.offset)*1000
 end
 local function settings(mode)
@@ -240,8 +242,7 @@ local function settings(mode)
     local e=r.AUDIO_SYNC_RETAIN_EMBEDDED_AUDIO
     local v=r.AUDIO_SYNC_RETAIN_VIDEO_METADATA
     local ch=r.AUDIO_SYNC_CHANNEL_NUMBER
-    if type(m)~="number" or type(e)~="number" or type(v)~="number"
-        or type(mode)~="number" or type(ch)~="number" then return nil end
+    if m==nil or e==nil or v==nil or mode==nil or ch==nil then return nil end
     return {[m]=mode,[e]=true,[v]=true,[ch]=1}
 end
 local function marker_sync(row,v,a)
@@ -289,6 +290,13 @@ local function marker_sync(row,v,a)
     return ok,string.format("target rounded to %.6f s; theoretical residual %.3f ms; marker grid %.3f ms",rounded,(rounded-row.offset)*1000,best.err*1000)
 end
 local previous_folder=call(pool,"GetCurrentFolder")
+local function rename_item(item,med,row)
+    if not item then return end
+    call(item,'SetClipProperty','Clip Name',med.alias)
+    call(item,'SetMetadata','Comments','SceneSlate '..row.id..' | '..med.path..' | '..table.concat(row.descriptions,' | '))
+    local color=({[1]='Green',[2]='Yellow',[3]='Red',[4]='Blue',[5]='Orange'})[row.category]
+    if color then call(item,'SetClipColor',color) end
+end
 local function run_row(row)
     local folder=find_folder(row.bins,false)
     local before=journal[row.id]
@@ -310,7 +318,19 @@ local function run_row(row)
         log(row,"BLOCKED","calibrate sign and verify project identity first",v,a);return
     end
     if row.status~="OK" or not row.video or not row.audio then
-        log(row,row.status=="SINGLE" and "SINGLE" or "REVIEW","no automatic sync requested",v,a);return
+        -- Never call AutoSyncAudio for these rows.
+        if (row.video and row.video.available) or (row.audio and row.audio.available) then
+            if not folder then folder=find_folder(row.bins,true) end
+            if folder then
+                save(row,"START",v,a)
+                if row.video and row.video.available and not v then v,ve=locate(row,"video",folder,true) end
+                if row.audio and row.audio.available and not a then a,ae=locate(row,"audio",folder,true) end
+                if v then claimed[id(v)]=key_for(row,"video");rename_item(v,row.video,row) end
+                if a then claimed[id(a)]=key_for(row,"audio");rename_item(a,row.audio,row) end
+                save(row,"NO_SYNC",v,a)
+            end
+        end
+        log(row,row.status=="SINGLE" and "SINGLE" or "REVIEW","no automatic sync requested; "..(ve or "").." "..(ae or ""),v,a);return
     end
     if not folder then folder=find_folder(row.bins,true) end
     if not folder then log(row,"REVIEW","target bin unavailable",v,a);return end
@@ -330,26 +350,25 @@ local function run_row(row)
     end
     if nonempty(prop(v,"Synced Audio")) then
         local err=offset_error(row,v)
+        local channels=number(prop(v,"Audio Ch"))
         local ok=synced_matches(v,row.audio) and err and math.abs(err)<=500/vf+1e-7
+            and channels==row.video.channels+row.audio.channels
         save(row,ok and "EXISTING_OK" or "REVIEW_EXISTING",v,a)
         log(row,ok and "EXISTING_OK" or "REVIEW_EXISTING","pre-existing sync preserved",v,a,err);return
     end
     -- Best-effort labels, but original File Path is never changed.
-    call(v,"SetClipProperty","Clip Name",row.video.alias)
-    call(a,"SetClipProperty","Clip Name",row.audio.alias)
-    local note=table.concat(row.descriptions," | ")
-    call(v,"SetMetadata","Comments","SceneSlate "..row.id.." | "..row.video.path.." | "..note)
-    call(a,"SetMetadata","Comments","SceneSlate "..row.id.." | "..row.audio.path.." | "..note)
+    rename_item(v,row.video,row)
+    rename_item(a,row.audio,row)
     local mode="marker"
     local detail=""
     local original_tc=prop(v,"Start TC")
-    local original_channels=number(prop(v,"Audio Ch"))
+    local original_channels=number(prop(v,"Audio Ch")) or row.video.channels
     local function verified(err)
         local after=number(prop(v,"Audio Ch"))
         local tc=prop(v,"Start TC")
         return synced_matches(v,row.audio) and err and math.abs(err)<=500/vf+1e-7
             and (not nonempty(original_tc) or tc==original_tc)
-            and (not original_channels or (after and after==original_channels+row.audio.channels))
+            and (after and after==original_channels+row.audio.channels)
     end
     if row.method~="manual" then
         local st=settings(r.AUDIO_SYNC_WAVEFORM)
@@ -383,12 +402,11 @@ local function run_row(row)
                 end
                 v=new;claimed[id(v)]=key_for(row,"video")
                 save(row,"BOUND_FALLBACK",v,a)
-                original_tc=prop(v,"Start TC");original_channels=number(prop(v,"Audio Ch"))
+                original_tc=prop(v,"Start TC");original_channels=number(prop(v,"Audio Ch")) or row.video.channels
                 if not fps_of(v) or math.abs(fps_of(v)-vf)>.005 then
                     save(row,"REVIEW_FPS",v,a);log(row,"REVIEW_FPS","reimported source FPS differs",v,a);return
                 end
-                call(v,"SetClipProperty","Clip Name",row.video.alias)
-                call(v,"SetMetadata","Comments","SceneSlate "..row.id.." | "..row.video.path.." | "..note)
+                rename_item(v,row.video,row)
             end
         end
     end

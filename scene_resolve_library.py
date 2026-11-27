@@ -51,7 +51,8 @@ def select_rows(c, scenes=None):
                 status=status,stored_status=raw.get('status'),offset=offset if usable else None,
                 method=raw.get('method',''),video=v and dict(v),audio=a and dict(a),
                 descriptions=[scene.get('description',''),shot.get('description',''),
-                              sub.get('description','') if sub else '',t.get('description',''),t.get('annotation','')],
+                              sub.get('description','') if sub else '',t.get('description',''),t.get('annotation',''),scene.get('notes',''),shot.get('notes',''),
+                              sub.get('notes','') if sub else '',t.get('notes','')],
                 only_reject=bool(v and all(not x.get('video') or x['video']['quality']=='S' for x in container['takes']))))
     return rows
 
@@ -63,7 +64,8 @@ def fraction(value):
 
 def probe(path, exe):
     p=subprocess.run([exe,'-v','error','-show_streams','-show_format','-of','json',str(path)],
-        capture_output=True,encoding='utf-8',errors='replace',timeout=40)
+        capture_output=True,encoding='utf-8',errors='replace',timeout=40,
+        creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
     if p.returncode:raise ValueError((p.stderr or 'FFprobe error')[:400])
     data=json.loads(p.stdout)
     streams=data.get('streams',[]);fmt=data.get('format',{})
@@ -116,6 +118,7 @@ def file_node(p,m,ident,fps):
     if m['video']:
         v=x(x(media,'video'),'samplecharacteristics');rate(v,fps)
         x(v,'width',m['video']['width']);x(v,'height',m['video']['height'])
+        x(v,'anamorphic','FALSE');x(v,'pixelaspectratio','square')
     if m['audio']:
         a=x(media,'audio');sc=x(a,'samplecharacteristics');first=m['audio'][0]
         if first.get('bits_per_raw_sample') or first.get('bits_per_sample'):
