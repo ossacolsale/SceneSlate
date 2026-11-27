@@ -1,4 +1,4 @@
-"""SceneSlate 3.3 catalog engine: scene/shot/subshot/take with video/audio pairs.
+"""SceneSlate 3.12.0-experimental.1 catalog engine: scene/shot/subshot/take with video/audio pairs.
 
 No media file is modified. This module has no GUI dependencies.
 """
@@ -961,11 +961,16 @@ def export_all(c,directory,modes=('csv',),fps=None):
             fps=fps if fps is not None else c.get('settings',{}).get('timeline_fps',25))
         warnings.extend(xml_warnings)
     with (dest/'export_report.txt').open('w',encoding='utf-8') as f:
-        f.write(f'SceneSlate 3.3 - export report\nResolve metadata rows: {count}\n')
+        f.write(f'SceneSlate 3.12.0-experimental.1 - export report\nResolve metadata rows: {count}\n')
         f.write(f'Export modes: {", ".join(sorted(modes))}\n')
         for mode,n in counts.items():f.write(f'XML {mode} timelines: {n}\n')
         f.write('\n')
-        f.write('\n'.join(warnings) if warnings else 'No ambiguities detected.\n')
+        errors=[w for w in warnings if w.startswith('SKIP ') and not w.startswith('SKIPPED ')]
+        omissions=[w for w in warnings if w.startswith('SKIPPED ') or 'external audio omitted' in w]
+        diagnostics=[w for w in warnings if w not in errors and w not in omissions]
+        f.write('Export errors (skipped timeline segments):\n'+'\n'.join(errors)+'\n')
+        f.write('Deliberate metadata/audio omissions:\n'+'\n'.join(omissions)+'\n')
+        f.write('Other diagnostics:\n'+'\n'.join(diagnostics)+'\n')
         f.write('\n\nNOTE: only OK waveform matches export paired external audio. '
                 'Unverified audio is omitted from the XML, not silently aligned. '
                 'XML is an editable timeline, not a native Media Pool sync clip. '

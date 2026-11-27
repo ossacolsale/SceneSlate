@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.12.0 experimental.1 — Resolve editing library
+
+- Add scene-selectable MAM library package, manifest and FFprobe metadata report.
+- Internal Lua audit and guarded per-pair synchronization; actual Resolve calibration pending.
+- Fix legacy export report version and distinguish omissions from skipped segments.
+
 ## 3.11.2 — Local sub-shot structure
 
 - Separate structural edits from linked take propagation, including inherited scene links and reverse assignment grouping.

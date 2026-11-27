@@ -375,6 +375,19 @@ EN_TO_IT.update({
     'Drag files onto a take to pair them.':'Trascina i file su un ciak per abbinarli.',
 })
 
+EN_TO_IT.update({
+    'DaVinci Resolve editing library':'Libreria di montaggio DaVinci Resolve',
+    'Choose scenes to export (experimental):':'Scegli le scene da esportare (sperimentale):',
+    'Select at least one scene.':'Seleziona almeno una scena.',
+    'Select all':'Seleziona tutte',
+    'No takes in selected scenes.':'Nessun ciak nelle scene selezionate.',
+    'FFprobe is required for Resolve library export.':'FFprobe necessario per esportare la libreria Resolve.',
+    'Exporting Resolve library…':'Esportazione libreria Resolve…',
+    'Inspecting original media with FFprobe…':'Analisi dei media originali con FFprobe…',
+    'Takes:':'Ciak:',
+    'Diagnostics:':'Diagnostica:',
+})
+
 def translate(message, language='en'):
     """Translate application-owned UI strings; do not use on user text or filenames."""
     if not isinstance(message,str):

@@ -1,10 +1,30 @@
-# SceneSlate 3.11.2
+# SceneSlate 3.12.0 — experimental
 
 <img src="sceneslate_logo.png" alt="SceneSlate logo" width="180">
 
 SceneSlate is a **cross-platform footage catalog** written in Python 3 and Tkinter. Its interface is available in **English and Italian**. A new installation starts in **English**; change the language using the **Language / Lingua** selector in the top toolbar. The preference survives restarts and upgrades, and switching languages does **not** rename files, modify a catalog or reset the scene selection.
 
 Footage is organized as **scene → shot → optional sub-shot → take**. Every take has an optional video reference and an optional audio reference, each with independent ratings (`B` good, `R` reserve, `S` reject). Takes can have descriptions and annotations; scenes, shots and sub-shots have optional descriptions. **Original media files are never renamed, moved, deleted or duplicated.** When a video/audio pair is complete, SceneSlate attempts **background waveform synchronization** if FFmpeg is installed; the alignment metadata is stored per take, never written into the media.
+
+## 3.12.0 experimental — Resolve editing library
+
+Use Export… → DaVinci Resolve editing library, select scenes, and choose a destination.
+A new package contains MAM XMEML, manifest, embedded internal Lua script, original
+FFprobe metadata, an export report and bilingual instructions. Original files and
+catalog schema are unchanged. Quality is classified per shot/sub-shot using video
+quality; audio-only takes are retained; unverified pairs go to To review while
+retaining their intended category in the manifest. Raw originals are kept separately.
+The script defaults to read-only AUDIT. It identifies exact paths and bins with
+association aliases and item IDs, logs all results, and guards repeat mutations
+with a project-specific journal. The positive Lua test report was not available
+at development time: offset sign, marker API/timebase, replacement semantics,
+and Source Viewer / F9/F10 behavior must still be confirmed in Resolve 21.2 Free.
+Do not enable APPLY in a production project. Waveform attempts with a mismatched
+existing attachment are left for review rather than silently attaching twice.
+Legacy XMEML is unchanged until real conform tests establish the correct patch.
+
+CLI (Python installed): python scene_slate.py --export catalog.sceneslate.json
+--out exports --modes library --scenes 3 --language it
 
 ## 3.11.2 — Local sub-shot structure and repair
 

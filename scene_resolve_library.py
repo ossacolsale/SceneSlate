@@ -211,7 +211,8 @@ def export_library(c,directory,scenes=None,language='en',ffprobe=None):
         if row['subshot']:label+=' '+row['subshot']
         label+=f' T{row["take"]:03d}'
         v,a=row['video'],row['audio']
-        label+=f' V-{v["quality"] if v else "-"} A-{a["quality"] if a else "-"}'
+        q={'B':'G','R':'R','S':'X'} if lang==1 else {'B':'B','R':'R','S':'S'}
+        label+=f' V-{q[v["quality"]] if v else "-"} A-{q[a["quality"]] if a else "-"}'
         row['label']=label
         shot=f'Shot {row["shot"]:03d}'
         if row['subshot']:shot+=' – '+row['subshot']
@@ -242,7 +243,7 @@ def export_library(c,directory,scenes=None,language='en',ffprobe=None):
     report=[f'SceneSlate {APP_VERSION} — Resolve library',f'Takes: {len(rows)}',
         *[f'{CATEGORIES[k][lang]}: {n}' for k,n in sorted(counts.items())],
         '', 'Rejected-only angles: '+', '.join(sorted(set(r['label'].split(' T')[0] for r in rows if r['only_reject']))),
-        '', 'ERRORS / ERRORS:',*issues,'','METADATA OMISSIONS (not export failures):',*dict.fromkeys(omissions),
+        '', 'EXPORT ERRORS:',*issues,'','METADATA OMISSIONS (not export failures):',*dict.fromkeys(omissions),
         '', 'Pending real Resolve validation: MAM item identity, marker mode, audio offset sign and units, audio mapping, Source Viewer and F9/F10.',
         'No physical media copied; catalog unchanged.']
     (dest/'export_report.txt').write_text('\n'.join(report)+'\n',encoding='utf-8')

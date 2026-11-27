@@ -2225,7 +2225,12 @@ class SceneSlateApp:
         controls=ttk.Frame(pane,style='Panel.TFrame');controls.pack(fill='x',pady=(16,0))
         ttk.Button(controls,text=self.tr('Cancel'),command=dialog.destroy).pack(side='right',padx=3)
         ttk.Button(controls,text=self.tr('Export…'),command=accept,style='Primary.TButton').pack(side='right',padx=3)
-        center_window(dialog,self.root,440,345)
+        ttk.Separator(pane).pack(fill='x',pady=(12,6))
+        def library():
+            dialog.destroy()
+            self.root.after_idle(self.export_resolve_library)
+        ttk.Button(pane,text=self.tr('DaVinci Resolve editing library'),command=library).pack(fill='x')
+        center_window(dialog,self.root,480,415)
         self.root.wait_window(dialog)
         if not selected:return
         modes,fps=selected[0]
@@ -2240,6 +2245,61 @@ class SceneSlateApp:
             f'Exported to: {dest}\nModes: {", ".join(modes)}\n'
             f'Resolve rows: {count}\nWarnings: {len(warnings)}\n'
             'See export_report.txt for skipped/unsynced media.',parent=self.root)
+
+    def export_resolve_library(self):
+        import scene_resolve_library as library
+        self.commit_notes()
+        scene_numbers=[s['number'] for s in sorted(self.catalog['scenes'],key=lambda x:x['number'])]
+        if not scene_numbers:
+            self.notice('No takes in selected scenes.');return
+        dialog=tk.Toplevel(self.root)
+        dialog.title(self.tr('DaVinci Resolve editing library'));dialog.transient(self.root);dialog.grab_set()
+        pane=ttk.Frame(dialog,style='Panel.TFrame',padding=16);pane.pack(fill='both',expand=True)
+        ttk.Label(pane,text=self.tr('Choose scenes to export (experimental):'),style='Section.TLabel').pack(anchor='w')
+        body=ttk.Frame(pane);body.pack(fill='both',expand=True,pady=8)
+        box=tk.Listbox(body,selectmode='extended',exportselection=False)
+        scroll=ttk.Scrollbar(body,orient='vertical',command=box.yview)
+        box.configure(yscrollcommand=scroll.set);box.pack(side='left',fill='both',expand=True);scroll.pack(side='right',fill='y')
+        for n in scene_numbers:box.insert('end',f"{self.tr('Scene')} {n:03d}")
+        current=self.selected_ids()[0]
+        if current in scene_numbers:box.selection_set(scene_numbers.index(current))
+        else:box.selection_set(0,'end')
+        selected=[]
+        def accept():
+            indices=box.curselection()
+            if not indices:
+                messagebox.showerror(self.tr('Export failed'),self.tr('Select at least one scene.'),parent=dialog);return
+            selected.extend(scene_numbers[i] for i in indices);dialog.destroy()
+        footer=ttk.Frame(pane);footer.pack(fill='x')
+        ttk.Button(footer,text=self.tr('Select all'),command=lambda:box.selection_set(0,'end')).pack(side='left')
+        ttk.Button(footer,text=self.tr('Cancel'),command=dialog.destroy).pack(side='right')
+        ttk.Button(footer,text=self.tr('Export…'),command=accept,style='Primary.TButton').pack(side='right',padx=5)
+        center_window(dialog,self.root,500,450)
+        self.root.wait_window(dialog)
+        if not selected:return
+        dest=filedialog.askdirectory(parent=self.root,title=self.tr('Choose export directory'))
+        if not dest:return
+        # Probe media in a worker; no Tk access from that worker.
+        catalog=copy.deepcopy(self.catalog);language=self.language
+        queue=Queue()
+        progress=tk.Toplevel(self.root);progress.title(self.tr('Exporting Resolve library…'))
+        progress.transient(self.root);progress.grab_set()
+        progress.protocol('WM_DELETE_WINDOW',lambda:None)
+        ttk.Label(progress,text=self.tr('Inspecting original media with FFprobe…'),padding=16).pack()
+        bar=ttk.Progressbar(progress,mode='indeterminate',length=280);bar.pack(padx=16,pady=12);bar.start(12)
+        def work():
+            try:queue.put((True,library.export_library(catalog,dest,selected,language)))
+            except Exception as exc:queue.put((False,str(exc)))
+        def check():
+            try:ok,result=queue.get_nowait()
+            except Empty:progress.after(100,check);return
+            bar.stop();progress.destroy()
+            if not ok:
+                messagebox.showerror(self.tr('Export failed'),result,parent=self.root);return
+            path,count,warnings=result
+            messagebox.showinfo(self.tr('Export completed'),f"{path}\n{self.tr('Takes:')} {count}\n{self.tr('Diagnostics:')} {len(warnings)}\nLEGGIMI_README.txt",parent=self.root)
+        threading.Thread(target=work,daemon=True).start()
+        progress.after(100,check)
 
     def undo(self):
         if not self.undo_stack:self.notice('Nessuna modifica da annullare.');return
@@ -2278,12 +2338,19 @@ def main():
     parser.add_argument('--out',metavar='DIRECTORY',help='Output directory for --export')
     parser.add_argument('--modes',default='csv,take,shot,scene',help='Comma-separated: csv,take,shot,scene')
     parser.add_argument('--fps',type=float,default=None,help='XML timeline FPS (default from catalog)')
+    parser.add_argument('--scenes',help='Comma-separated scene numbers for library export')
+    parser.add_argument('--language',choices=('it','en'),default='en',help='Resolve library bin language')
     parser.add_argument('project',nargs='?',help='Catalog to open')
     args=parser.parse_args()
     if args.export:
         if not args.out:parser.error('--export requires --out DIRECTORY')
         c=core.load_catalog(args.export)
-        count,warnings=core.export_all(c,args.out,modes=args.modes.split(','),fps=args.fps)
+        if args.modes=='library':
+            import scene_resolve_library as library
+            path,count,warnings=library.export_library(c,args.out,[int(x) for x in args.scenes.split(',')] if args.scenes else None,args.language)
+            print(path)
+        else:
+            count,warnings=core.export_all(c,args.out,modes=args.modes.split(','),fps=args.fps)
         print(f'Exported {count} files for Resolve; {len(warnings)} warnings.')
         for w in warnings:print('WARNING:',w)
         return
