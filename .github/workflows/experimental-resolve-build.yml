@@ -1,0 +1,51 @@
+name: SceneSlate 3.12 experimental validation
+on:
+  push:
+    branches: [experiment/3.12.0-resolve-library]
+    paths: [.github/workflows/experimental-resolve-build.yml]
+permissions: {}
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: 9a549551a40394101dba073e230d1a9b73c11fdd
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: sudo apt-get update && sudo apt-get install -y python3-tk xvfb ffmpeg lua5.4
+      - run: python -m pip install numpy
+      - run: xvfb-run -a python -m unittest discover -s tests -v
+  windows:
+    needs: tests
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: 9a549551a40394101dba073e230d1a9b73c11fdd
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: python -m pip install numpy pyinstaller pefile
+      - run: python -m unittest discover -s tests -v
+      - name: Build experimental executable
+        shell: pwsh
+        run: python -m PyInstaller --clean --onefile --windowed --noconfirm --name SceneSlate-3.12.0-experimental.1 --paths . --icon sceneslate_logo.ico --add-data 'sceneslate_icon.png;.' --add-data 'sceneslate_logo.ico;.' scene_slate.pyw
+      - name: Verify executable icon
+        run: python scripts/verify_windows_icon.py dist/SceneSlate-3.12.0-experimental.1.exe sceneslate_logo.ico
+      - name: Package
+        shell: pwsh
+        run: Compress-Archive -Path dist/SceneSlate-3.12.0-experimental.1.exe -DestinationPath SceneSlate-3.12.0-experimental.1-windows-x64.zip
+      - name: Attach to unpublished draft only
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create v3.12.0-experimental.1 --repo "$env:GITHUB_REPOSITORY" --target 9a549551a40394101dba073e230d1a9b73c11fdd --draft --prerelease --title "SceneSlate 3.12.0 experimental.1 — NOT PUBLISHED" --notes "Windows laboratory build for scene 003. Internal Lua, MAM and guarded native sync. Full Resolve validation pending. Do not use in production." SceneSlate-3.12.0-experimental.1-windows-x64.zip
