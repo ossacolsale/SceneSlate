@@ -1,14 +1,13 @@
 """Self-contained Lua script body; embedded into every exported package."""
 LUA=r'''
 -- Experimental only. Read the audit report before changing these settings.
-local APPLY = false
--- Set to +1 if Resolve Audio Offset = SceneSlate offset * source FPS,
--- or -1 if the calibration demonstrates the opposite sign. Never guess.
-local OFFSET_SIGN = nil
--- Optional measured marker timebase for audio-only items with missing FPS.
-local AUDIO_MARKER_FPS = nil
--- Enable only after verifying that marker mode is supported by this build.
-local MARKER_VALIDATED = false
+local APPLY = true
+-- 08_TEST_SYNC_NATIVO: 25 fps, same sign, fractional Resolve frame offsets.
+local OFFSET_SIGN = 1
+-- If WAV FPS is unavailable, project FPS is an experimental fallback.
+-- The resulting marker attachment must pass readback before acceptance.
+local AUDIO_MARKER_FPS = 25
+local MARKER_VALIDATED = true
 
 local function call(obj, method, ...)
     if not obj then return nil end
@@ -100,13 +99,14 @@ local function child(folder,name)
 end
 local roots={}
 local all_ids={}
+local id_count={}
 local basename_paths={}
 local function walk(folder)
     if call(folder,"GetName")==manifest.root then
         roots[#roots+1]=folder
     end
     for _,item in pairs(clips(folder)) do
-        local k=id(item);if k~="" then all_ids[k]=true end
+        local k=id(item);if k~="" then all_ids[k]=true;id_count[k]=(id_count[k] or 0)+1 end
         local path=norm(prop(item,"File Path"))
         if path~="" then
             local name=norm(basename(path))
@@ -131,6 +131,7 @@ if #candidates~=1 then
     report:close();return
 end
 local package_root=candidates[1]
+project_id=project_id or call(package_root,"GetUniqueId")
 local function find_folder(names,create)
     local folder=package_root
     for i=2,#names do
@@ -190,7 +191,7 @@ local function locate(row,kind,folder,allow_import)
     local wanted=previous and (kind=="video" and previous.v or previous.a)
     for _,item in pairs(clips(folder)) do
         local uid=id(item)
-        if uid~="" and norm(prop(item,"File Path"))==norm(med.path) and not claimed[uid] then
+        if uid~="" and id_count[uid]==1 and norm(prop(item,"File Path"))==norm(med.path) and not claimed[uid] then
             if wanted and wanted~="" and uid==wanted then return item end
             matches[#matches+1]=item
             if call(item,"GetName")==med.alias or prop(item,"Clip Name")==med.alias then exact[#exact+1]=item end
@@ -215,7 +216,7 @@ local function locate(row,kind,folder,allow_import)
         end
     end
     if #fresh~=1 then return nil,"ImportMedia did not yield one distinct ID in target bin" end
-    all_ids[id(fresh[1])]=true
+    all_ids[id(fresh[1])]=true;id_count[id(fresh[1])]=1
     return fresh[1]
 end
 local function synced_matches(item,audio)
@@ -241,7 +242,7 @@ local function settings(mode)
     local ch=r.AUDIO_SYNC_CHANNEL_NUMBER
     if type(m)~="number" or type(e)~="number" or type(v)~="number"
         or type(mode)~="number" or type(ch)~="number" then return nil end
-    return {[m]=mode,[e]=true,[v]=true,[ch]=r.AUDIO_SYNC_CHANNEL_AUTOMATIC or -1}
+    return {[m]=mode,[e]=true,[v]=true,[ch]=1}
 end
 local function marker_sync(row,v,a)
     if not MARKER_VALIDATED then return false,"marker API not calibrated" end
@@ -254,19 +255,20 @@ local function marker_sync(row,v,a)
     if next(vm) or next(am) then return false,"existing markers; manual review required" end
     local vf,af=fps_of(v),fps_of(a) or AUDIO_MARKER_FPS
     if not vf or vf<=0 or not af or af<=0 then return false,"marker FPS unknown" end
-    local start=math.max(0,-row.offset)
-    local finish=math.min(row.video.duration,row.audio.duration-row.offset)
+    local rounded=nearest(row.offset*vf)/vf
+    local start=math.max(0,-rounded)
+    local finish=math.min(row.video.duration,row.audio.duration-rounded)
     -- Pick a common interior point; test nearby video frames to minimize
     -- audio-marker quantization and stay inside both files.
     local best=nil
     local first=math.ceil(start*vf)
     for vi=first,first+math.min(100,math.floor((finish-start)*vf)) do
-        local at=vi/vf+row.offset
+        local at=vi/vf+rounded
         local ai=nearest(at*af)
         local vn,an=number(prop(v,"Frames")),number(prop(a,"Frames"))
         if vi>=0 and ai>=0 and vi/vf<row.video.duration and ai/af<row.audio.duration
             and (not vn or vi<vn) and (not an or ai<an) then
-            local err=math.abs(ai/af-vi/vf-row.offset)
+            local err=math.abs(ai/af-vi/vf-rounded)
             if not best or err<best.err then best={vi=vi,ai=ai,err=err} end
         end
     end
@@ -284,7 +286,7 @@ local function marker_sync(row,v,a)
     local ok=false
     if made_v and made_a then ok=call(pool,"AutoSyncAudio",{v,a},st)==true end
     remove(v,best.vi);remove(a,best.ai)
-    return ok,string.format("marker quantization %.3f ms",best.err*1000)
+    return ok,string.format("target rounded to %.6f s; theoretical residual %.3f ms; marker grid %.3f ms",rounded,(rounded-row.offset)*1000,best.err*1000)
 end
 local previous_folder=call(pool,"GetCurrentFolder")
 local function run_row(row)
@@ -340,26 +342,59 @@ local function run_row(row)
     call(a,"SetMetadata","Comments","SceneSlate "..row.id.." | "..row.audio.path.." | "..note)
     local mode="marker"
     local detail=""
+    local original_tc=prop(v,"Start TC")
+    local original_channels=number(prop(v,"Audio Ch"))
+    local function verified(err)
+        local after=number(prop(v,"Audio Ch"))
+        local tc=prop(v,"Start TC")
+        return synced_matches(v,row.audio) and err and math.abs(err)<=500/vf+1e-7
+            and (not nonempty(original_tc) or tc==original_tc)
+            and (not original_channels or (after and after==original_channels+row.audio.channels))
+    end
     if row.method~="manual" then
         local st=settings(r.AUDIO_SYNC_WAVEFORM)
         if st then
             mode="waveform";call(pool,"AutoSyncAudio",{v,a},st)
             local err=offset_error(row,v)
-            if synced_matches(v,row.audio) and err and math.abs(err)<=500/vf+1e-7 then
+            if verified(err) then
                 save(row,"OK_WAVEFORM",v,a);log(row,"OK_WAVEFORM","readback within half source frame",v,a,err);return
             end
             if nonempty(prop(v,"Synced Audio")) then
-                -- Unknown replacement semantics: never attach a second audio
-                -- track blindly. Record discrepancy and leave for review.
-                save(row,"REVIEW_WAVEFORM_ATTACHED",v,a)
-                log(row,"REVIEW_WAVEFORM_ATTACHED","existing waveform attachment outside tolerance; marker replacement not verified",v,a,err)
-                return
+                -- Reimport an independent item; never sync the attached item twice.
+                -- MoveClips is documented but this quarantine flow needs real validation.
+                local review=child(package_root,"99 – Sync diagnostics")
+                if not review then review=call(pool,"AddSubFolder",package_root,"99 – Sync diagnostics") end
+                local quarantine=review and (child(review,row.id) or call(pool,"AddSubFolder",review,row.id))
+                local old_id=id(v)
+                if not quarantine or call(pool,"MoveClips",{v},quarantine)~=true then
+                    save(row,"REVIEW_WAVEFORM_ATTACHED",v,a)
+                    log(row,"REVIEW_WAVEFORM_ATTACHED","cannot quarantine attached attempt",v,a,err);return
+                end
+                local moved=false
+                for _,item in pairs(clips(quarantine)) do if id(item)==old_id then moved=true end end
+                if not moved then
+                    save(row,"REVIEW_WAVEFORM_ATTACHED",v,a);log(row,"REVIEW_WAVEFORM_ATTACHED","quarantine ID not verified",v,a,err);return
+                end
+                log(row,"QUARANTINED_WAVEFORM","out-of-tolerance attachment retained separately",v,a,err)
+                save(row,"REIMPORT_PENDING",nil,a)
+                local new,why=locate(row,"video",folder,true)
+                if not new or id(new)==old_id or nonempty(prop(new,"Synced Audio")) then
+                    save(row,"REVIEW_REIMPORT",nil,a);log(row,"REVIEW_REIMPORT",why or "fresh video not independent",new,a);return
+                end
+                v=new;claimed[id(v)]=key_for(row,"video")
+                save(row,"BOUND_FALLBACK",v,a)
+                original_tc=prop(v,"Start TC");original_channels=number(prop(v,"Audio Ch"))
+                if not fps_of(v) or math.abs(fps_of(v)-vf)>.005 then
+                    save(row,"REVIEW_FPS",v,a);log(row,"REVIEW_FPS","reimported source FPS differs",v,a);return
+                end
+                call(v,"SetClipProperty","Clip Name",row.video.alias)
+                call(v,"SetMetadata","Comments","SceneSlate "..row.id.." | "..row.video.path.." | "..note)
             end
         end
     end
     local ok,msg=marker_sync(row,v,a)
     local err=offset_error(row,v)
-    local valid=ok and synced_matches(v,row.audio) and err and math.abs(err)<=500/vf+1e-7
+    local valid=ok and verified(err)
     save(row,valid and "OK_MARKER" or "REVIEW_MARKER",v,a)
     log(row,valid and "OK_MARKER" or "REVIEW_MARKER",msg,v,a,err)
 end

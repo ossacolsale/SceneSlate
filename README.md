@@ -14,13 +14,14 @@ FFprobe metadata, an export report and bilingual instructions. Original files an
 catalog schema are unchanged. Quality is classified per shot/sub-shot using video
 quality; audio-only takes are retained; unverified pairs go to To review while
 retaining their intended category in the manifest. Raw originals are kept separately.
-The script defaults to read-only AUDIT. It identifies exact paths and bins with
-association aliases and item IDs, logs all results, and guards repeat mutations
-with a project-specific journal. The positive Lua test report was not available
-at development time: offset sign, marker API/timebase, replacement semantics,
-and Source Viewer / F9/F10 behavior must still be confirmed in Resolve 21.2 Free.
-Do not enable APPLY in a production project. Waveform attempts with a mismatched
-existing attachment are left for review rather than silently attaching twice.
+The script defaults to APPLY in a disposable test project; set APPLY=false for audit.
+Reports 07/08 confirm MAM import, native waveform/marker sync, same offset sign
+in source frames at 25 fps, independent reimports and Source Viewer/F9 editing.
+The script uses channel 1 and retains embedded audio and video metadata.
+An unacceptable attached waveform is quarantined and a fresh distinct item is
+used for marker fallback, without re-syncing the attached item. This complete
+fallback path, positive offsets, mixed rates and full-scene reruns still need real
+Resolve validation. Do not use APPLY in a production project yet.
 Legacy XMEML is unchanged until real conform tests establish the correct patch.
 
 CLI (Python installed): python scene_slate.py --export catalog.sceneslate.json

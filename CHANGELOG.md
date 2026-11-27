@@ -3,7 +3,7 @@
 ## 3.12.0 experimental.1 — Resolve editing library
 
 - Add scene-selectable MAM library package, manifest and FFprobe metadata report.
-- Internal Lua audit and guarded per-pair synchronization; actual Resolve calibration pending.
+- Internal Lua synchronization using verified 25 fps sign/units and marker mode; full-scene validation pending.
 - Fix legacy export report version and distinguish omissions from skipped segments.
 
 ## 3.11.2 — Local sub-shot structure

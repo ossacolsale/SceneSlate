@@ -190,6 +190,8 @@ def export_library(c,directory,scenes=None,language='en',ffprobe=None):
             if min(v.get('duration',0),a.get('duration',0)-lag)<=max(0.,-lag):
                 row['status']='PENDING';row['category']=5;issues.append(f'{row["id"]}: no valid overlap')
     lang=0 if language=='it' else 1
+    repetitions=Counter((row['scene'],row['shot'],row['subshot_id'],row['category'],kind,core.identity(row[kind]['path']))
+        for row in rows for kind in ('video','audio') if row[kind] and row[kind].get('available'))
     # Stable ID includes source fingerprints and placement. Distinct packages never
     # overwrite an existing project bin; repeated execution of one package is audited.
     stamp=datetime.now().strftime('%Y%m%d_%H%M%S_%f')
@@ -218,6 +220,9 @@ def export_library(c,directory,scenes=None,language='en',ffprobe=None):
         if row['subshot']:shot+=' – '+row['subshot']
         # A shot/sub-shot pair with a similar display name remains identifiable by token.
         names=[root_name,f'Scena {row["scene"]:03d}' if lang==0 else f'Scene {row["scene"]:03d}',CATEGORIES[row['category']][lang],shot]
+        if any(repetitions[(row['scene'],row['shot'],row['subshot_id'],row['category'],kind,core.identity(row[kind]['path']))]>1
+               for kind in ('video','audio') if row[kind] and row[kind].get('available')):
+            names.append(f'Take {row["take"]:03d} – {row["id"][:8]}')
         row['bins']=names
         for kind in ('video','audio'):
             med=row[kind]
@@ -244,7 +249,7 @@ def export_library(c,directory,scenes=None,language='en',ffprobe=None):
         *[f'{CATEGORIES[k][lang]}: {n}' for k,n in sorted(counts.items())],
         '', 'Rejected-only angles: '+', '.join(sorted(set(r['label'].split(' T')[0] for r in rows if r['only_reject']))),
         '', 'EXPORT ERRORS:',*issues,'','METADATA OMISSIONS (not export failures):',*dict.fromkeys(omissions),
-        '', 'Pending real Resolve validation: MAM item identity, marker mode, audio offset sign and units, audio mapping, Source Viewer and F9/F10.',
+        '', 'Validated in report 08: waveform + marker, sign and units at 25 fps, reimported distinct IDs, Source Viewer/F9. Pending: full scene, positive offsets, mixed rates, fallback quarantine, repeat execution.',
         'No physical media copied; catalog unchanged.']
     (dest/'export_report.txt').write_text('\n'.join(report)+'\n',encoding='utf-8')
     (dest/'LEGGIMI_README.txt').write_text(INSTRUCTIONS,encoding='utf-8')
@@ -255,21 +260,22 @@ IT: usa una COPIA del progetto temporaneo. Importa library_mam.xml dal menu Medi
 Import Media from XML (non come timeline). Non reimportare lo stesso XML due volte.
 Apri Workspace > Console, seleziona Lua, esegui:
     dofile([[PERCORSO COMPLETO\\sync_library.lua]])
-Prima esecuzione: AUDIT (nessuna modifica Resolve). Leggi sync_report.tsv.
-La convenzione del segno Audio Offset e il timebase dei marker audio devono essere
-confermati dal collaudo Lua originale prima di abilitare APPLY. Modifica le impostazioni
-all'inizio dello script, solo in un progetto di prova. Marker mode deve essere disponibile.
-Se una waveform ha gia collegato un audio con offset non accettabile, lo script non
-riapplica AutoSyncAudio sulla stessa clip: segnala REVIEW per evitare doppie tracce.
+Esecuzione: lo script sincronizza nel progetto di prova. Leggi sync_report.tsv.
+Imposta APPLY=false all'inizio dello script per una verifica di sola lettura.
+Collaudo 08: segno coincidente, offset in fotogrammi a 25 fps, marker video 174/WAV 0.
+Per una waveform fuori tolleranza lo script conserva il tentativo in Sync diagnostics
+e prova a reimportare un MediaPoolItem distinto, quindi applica marker.
+Il percorso di fallback completo e i marker positivi restano da collaudare.
 Per verificare le tracce usa Clip Attributes, Source Viewer, In/Out, F9/F10.
 Non modificare o cancellare sync_state.tsv: e' il registro di tentativi di questo pacchetto.
 EN: use a COPY of the temporary project. Import library_mam.xml via Media Pool
 Import Media from XML, not timeline import. Import only once. In Workspace > Console
 select Lua and use dofile([[FULL PATH\\sync_library.lua]]).
-Default AUDIT is read-only. Read sync_report.tsv. Confirm Audio Offset sign and
-audio marker timebase from actual Lua calibration before enabling APPLY.
-A waveform that already attached audio with an unacceptable offset is NOT retried
-on that clip until replacement semantics have been validated; review manually.
+Default APPLY synchronizes within the test project. Set APPLY=false for read-only audit.
+Report 08 confirms same offset sign and frame units at 25 fps, marker sync, distinct
+reimported IDs, and Source Viewer editing. An unacceptable attached waveform is
+quarantined; a separately imported item is used for marker fallback. Verify this
+fallback and positive offsets in the real project.
 Verify Clip Attributes, Source Viewer, In/Out, F9/F10. Keep sync_state.tsv.
 All original media and the catalog remain untouched.
 """
